@@ -28,11 +28,11 @@ import { Signal } from '@adbl/signals';
 const count = Signal.source(0);
 
 // Derive a new signal based on the count signal
-const doubledCount = Signal.derived(() => count.value \* 2);
+const doubledCount = Signal.derived(() => count.value * 2);
 
 // Subscribe to changes in the derived signal
 doubledCount.createEffect((value) => {
-console.log(`Doubled count: ${value}`);
+  console.log(`Doubled count: ${value}`);
 });
 
 // Update the original signal
