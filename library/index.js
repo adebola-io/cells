@@ -9,6 +9,6 @@ import { Derived } from './Derived';
  * signal values.
  */
 export const Signal = {
-  Cell,
-  Derived,
+  cell: Cell,
+  derived: Derived,
 };

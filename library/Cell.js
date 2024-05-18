@@ -11,11 +11,13 @@ export class Cell extends Watchable {
    */
   constructor(value) {
     super();
-    this.setValue(value);
+    let valueToWatch = value;
+    valueToWatch = this.proxify(value);
+    this.setValue(valueToWatch);
   }
 
   get value() {
-    return this._read_value;
+    return this.rvalue;
   }
 
   /**
@@ -23,13 +25,37 @@ export class Cell extends Watchable {
    * @param {T} value
    */
   set value(value) {
-    const oldValue = this._write_value;
+    const oldValue = this.wvalue;
     this.setValue(value);
 
-    if (oldValue === this._write_value) {
+    if (oldValue === this.wvalue) {
       return;
     }
 
     this.update();
+  }
+
+  /**
+   * @param {T} value
+   * @returns {T}
+   */
+  proxify(value) {
+    if (typeof value !== 'object' || value === null) {
+      return value;
+    }
+
+    return new Proxy(value, {
+      get: (target, prop) => {
+        this.rvalue;
+        // @ts-ignore
+        return this.proxify(target[prop]);
+      },
+      set: (target, prop, value) => {
+        // @ts-ignore
+        target[prop] = value;
+        this.update();
+        return true;
+      },
+    });
   }
 }

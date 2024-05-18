@@ -8,7 +8,6 @@ import { activeComputedValues } from './root.js';
  * @extends {Watchable<T>}
  */
 export class Derived extends Watchable {
-  id = 'newComputed';
   #computedFn;
 
   /**
@@ -23,7 +22,7 @@ export class Derived extends Watchable {
   }
 
   get value() {
-    return this._read_value;
+    return this.rvalue;
   }
 
   set value(value) {

@@ -7,21 +7,21 @@ export class Watchable {
   /**
    * @protected @type T
    */
-  _write_value = /** @type {T} */ (null);
+  wvalue = /** @type {T} */ (null);
 
   /**
    * @protected
    * @param {T} value
    */
   setValue(value) {
-    this._write_value = value;
+    this.wvalue = value;
   }
 
   /**
    * The value stored in the Cell.
    * @protected @type {T}
    */
-  get _read_value() {
+  get rvalue() {
     const { dependencyGraph } = root;
     if (!dependencyGraph.has(this)) {
       dependencyGraph.set(this, []);
@@ -32,7 +32,7 @@ export class Watchable {
       dependencyGraph.get(this)?.push(currentlyComputedValue);
     }
 
-    return this._write_value;
+    return this.wvalue;
   }
 
   /**
@@ -80,7 +80,7 @@ export class Watchable {
     const watchers = root.watchers.get(this);
     if (watchers !== undefined) {
       for (const watcher of watchers) {
-        watcher(this._write_value);
+        watcher(this.wvalue);
       }
     }
 
