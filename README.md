@@ -23,10 +23,10 @@ Here's a basic example of how to use bullet:
 import { Signal } from '@adbl/bullet';
 
 // Create a signal
-const count = new Signal.cell(0);
+const count = Signal.cell(0);
 
 // Derive a new signal based on the count signal
-const doubledCount = new Signal.derived(() => count.value * 2);
+const doubledCount = Signal.derived(() => count.value * 2);
 
 // Subscribe to changes in the derived signal
 doubledCount.subscribe((value) => {

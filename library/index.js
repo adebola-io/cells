@@ -9,6 +9,19 @@ import { Derived } from './Derived';
  * signal values.
  */
 export const Signal = {
-  cell: Cell,
-  derived: Derived,
+  /**
+   * @template T
+   * Creates a new Cell instance with the provided value.
+   * @param {T} value - The value to be stored in the Cell.
+   * @returns {Cell<T>} A new Cell instance.
+   */
+  cell: (value) => new Cell(value),
+
+  /**
+   * @template T
+   * Creates a new Derived instance with the provided callback function.
+   * @param {() => T} callback - The callback function to be used by the Derived instance.
+   * @returns {Derived<T>} A new Derived instance.
+   */
+  derived: (callback) => new Derived(callback),
 };
