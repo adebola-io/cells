@@ -1,80 +1,35 @@
-import { activeComputedValues, root } from './root';
+import { Watchable } from './Watchable.js';
 
 /**
  * @template T
+ * @extends {Watchable<T>}
  */
-export class Cell {
-  #value;
+export class Cell extends Watchable {
   /**
-   * Creates a reactive Cell of type T
+   * Creates a new Cell with the provided value.
    * @param {T} value
    */
   constructor(value) {
-    this.#value = value;
+    super();
+    this.setValue(value);
   }
 
-  /**
-   * The value stored in the Cell.
-   * @type {T}
-   */
   get value() {
-    const { dependencyGraph } = root;
-    if (!dependencyGraph.has(this)) {
-      dependencyGraph.set(this, []);
-    }
-    const currentlyComputedValue = activeComputedValues.at(-1);
-
-    if (currentlyComputedValue !== undefined) {
-      dependencyGraph.get(this)?.push(currentlyComputedValue);
-    }
-
-    return this.#value;
+    return this._read_value;
   }
 
   /**
    * Sets the value stored in the Cell and triggers an update.
+   * @param {T} value
    */
   set value(value) {
-    const oldValue = this.#value;
-    this.#value = value;
+    const oldValue = this._write_value;
+    this.setValue(value);
 
-    if (oldValue === this.#value) {
+    if (oldValue === this._write_value) {
       return;
     }
 
-    this.#update();
-  }
-
-  /**
-   * Runs all dependents of this Cell.
-   */
-  #update() {
-    // Run watchers.
-    const watchers = root.watchers.get(this);
-    if (watchers !== undefined) {
-      for (const watcher of watchers) {
-        watcher(this.#value);
-      }
-    }
-
-    // Run computed dependents.
-    const computedDependents = root.dependencyGraph.get(this);
-    if (computedDependents !== undefined) {
-      for (const dependent of computedDependents) {
-        dependent.update();
-      }
-    }
-  }
-
-  /**
-   * @param {(newValue: T) => void | ((oldValue: T, newValue: T) => void)} effect
-   */
-  onChange(effect) {
-    const watchList = root.watchers.get(this);
-    if (watchList === undefined) {
-      root.watchers.set(this, [effect]);
-      return;
-    }
-    watchList.push(effect);
+    this.update();
   }
 }

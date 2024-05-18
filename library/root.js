@@ -1,18 +1,18 @@
 /**
- * @typedef {import('./Cell').Cell<any>} Cell
+ * @typedef {import('./Watchable').Watchable<any>} Watchable
  * @typedef {import('./Derived').Derived<any>} Derived
  */
 
 export const root = {
   /**
    * A WeakMap that stores watchers for every Cell.
-   * @type {WeakMap<Cell, ((newValue: any) => void)[]>}
+   * @type {WeakMap<Watchable, ((newValue: any) => void)[]>}
    */
   watchers: new WeakMap(),
 
   /**
    * A WeakMap that stores computed dependents for every Cell.
-   * @type {WeakMap<Cell, Derived[]>}
+   * @type {WeakMap<Watchable, Derived[]>}
    */
   dependencyGraph: new WeakMap(),
 };
