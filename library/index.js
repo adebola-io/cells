@@ -15,7 +15,7 @@ const Signal = {
    * @param {Partial<import('./root.js').GlobalEffectOptions>} [options] - The options for the effect.
    * @example
    * ```
-   * import { Signal } from '@adbl/bullet';
+   * import { Signal } from '@adbl/signals';
    *
    * const signal = Signal.source(0);
    * Signal.beforeUpdate((value) => console.log(value));
@@ -33,7 +33,7 @@ const Signal = {
    * @param {Partial<import('./root.js').GlobalEffectOptions>} [options] - Options for the effect.
    * @example
    * ```
-   * import { Signal } from '@adbl/bullet';
+   * import { Signal } from '@adbl/signals';
    *
    * const effect = (value) => console.log(value);
    * Signal.afterUpdate(effect);
@@ -56,7 +56,7 @@ const Signal = {
    * @param {(value: unknown) => void} effect - The effect function added previously.
    * @example
    * ```
-   * import { Signal } from '@adbl/bullet';
+   * import { Signal } from '@adbl/signals';
    *
    * const effect = (value) => console.log(value);
    * Signal.beforeUpdate(effect);
@@ -81,7 +81,7 @@ const Signal = {
    * @param {T} value - The value to be stored in the Signal.
    * @returns {SourceSignal<T>} A new Signal instance.
    * ```
-   * import { Signal } from '@adbl/bullet';
+   * import { Signal } from '@adbl/signals';
    *
    * const signal = Signal.source('Hello world');
    * console.log(signal.value); // Hello world.
@@ -98,7 +98,7 @@ const Signal = {
    * @param {() => T} callback - The callback function to be used by the Derived instance.
    * @returns {DerivedSignal<T>} A new Derived instance.
    * ```
-   * import { Signal } from '@adbl/bullet';
+   * import { Signal } from '@adbl/signals';
    *
    * const signal = Signal.source(2);
    * const derived = Signal.derived(() => signal.value * 2);

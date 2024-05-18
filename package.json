@@ -3,15 +3,16 @@
   "version": "0.0.1",
   "description": "A simple implementation of reactive signals",
   "main": "index.js",
+  "private": false,
   "type": "module",
   "module": "./index.js",
-  "typings": "./index.d.ts",
+  "typings": "./types/index.d.ts",
   "scripts": {
     "test": "vitest"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/adebola-io/bullet.git"
+    "url": "git+https://github.com/adebola-io/signals.git"
   },
   "keywords": [
     "reactive",
@@ -21,9 +22,9 @@
   "author": "<NAME>",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/adebola-io/bullet/issues"
+    "url": "https://github.com/adebola-io/signals/issues"
   },
-  "homepage": "https://github.com/adebola-io/bullet#readme",
+  "homepage": "https://github.com/adebola-io/signals#readme",
   "devDependencies": {
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
