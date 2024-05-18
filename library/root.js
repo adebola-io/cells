@@ -1,9 +1,14 @@
 /**
  * @typedef {import('./Watchable').Watchable<any>} Watchable
- * @typedef {import('./Derived').Derived<any>} Derived
+ * @typedef {import('./Derived').DerivedCell<any>} Derived
  */
 
 export const root = {
+  /**
+   * An array of global effects that run every time a source Cell is updated.
+   * @type {((value: any) => void)[]}
+   */
+  globalEffects: [],
   /**
    * A WeakMap that stores watchers for every Cell.
    * @type {WeakMap<Watchable, ((newValue: any) => void)[]>}

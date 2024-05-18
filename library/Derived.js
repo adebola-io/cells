@@ -7,7 +7,7 @@ import { activeComputedValues } from './root.js';
  * @template T
  * @extends {Watchable<T>}
  */
-export class Derived extends Watchable {
+export class DerivedCell extends Watchable {
   #computedFn;
 
   /**

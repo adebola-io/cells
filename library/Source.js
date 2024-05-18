@@ -4,7 +4,7 @@ import { Watchable } from './Watchable.js';
  * @template T
  * @extends {Watchable<T>}
  */
-export class Cell extends Watchable {
+export class SourceCell extends Watchable {
   /**
    * Creates a new Cell with the provided value.
    * @param {T} value

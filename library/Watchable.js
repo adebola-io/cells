@@ -43,15 +43,15 @@ export class Watchable {
    * @param {(newValue: T) => void} effect - The effect function to subscribe.
    * @returns {() => void} - A function that can be used to unsubscribe the effect.
    */
-  subscribe(effect) {
+  createEffect(effect) {
     const watchList = root.watchers.get(this);
     if (watchList === undefined) {
       root.watchers.set(this, [effect]);
-      return () => this.unsubscribe(effect);
+      return () => this.removeEffect(effect);
     }
     watchList.push(effect);
 
-    return () => this.unsubscribe(effect);
+    return () => this.removeEffect(effect);
   }
 
   /**
@@ -59,7 +59,7 @@ export class Watchable {
    *
    * @param {(newValue: T) => void} effect - The effect function to unsubscribe.
    */
-  unsubscribe(effect) {
+  removeEffect(effect) {
     const watchList = root.watchers.get(this);
     if (watchList === undefined) {
       return;
@@ -76,6 +76,11 @@ export class Watchable {
    * This method is called whenever the root object's value changes.
    */
   update() {
+    // global effects
+    for (const effect of root.globalEffects) {
+      effect(this.wvalue);
+    }
+
     // Run watchers.
     const watchers = root.watchers.get(this);
     if (watchers !== undefined) {
