@@ -1,22 +1,33 @@
 /**
- * @typedef {import('./Watchable').Watchable<any>} Watchable
- * @typedef {import('./Derived').DerivedCell<any>} Derived
+ * @typedef {import('./classes.js').Watchable<any>} Watchable
+ * @typedef {import('./classes.js').DerivedSignal<any>} Derived
+ *
+ * @typedef GlobalEffectOptions
+ * @property {boolean} runOnce - Whether the effect should be removed after the first run.
+ * @property {boolean} ignoreDerivedSignals - Whether the effect should be run even if the signal is a derived signal.
  */
 
 export const root = {
   /**
-   * An array of global effects that run every time a source Cell is updated.
-   * @type {((value: any) => void)[]}
+   * An array of global effects that run before a source Signal is updated.
+   * @type {[Partial<GlobalEffectOptions>, ((value: any) => void)][]}
    */
-  globalEffects: [],
+  globalPreEffects: [],
+
   /**
-   * A WeakMap that stores watchers for every Cell.
+   * An array of global effects that run after a source Signal is updated.
+   * @type {[Partial<GlobalEffectOptions>, ((value: any) => void)][]}
+   */
+  globalPostEffects: [],
+
+  /**
+   * A WeakMap that stores watchers for every Signal.
    * @type {WeakMap<Watchable, ((newValue: any) => void)[]>}
    */
   watchers: new WeakMap(),
 
   /**
-   * A WeakMap that stores computed dependents for every Cell.
+   * A WeakMap that stores computed dependents for every Signal.
    * @type {WeakMap<Watchable, Derived[]>}
    */
   dependencyGraph: new WeakMap(),
