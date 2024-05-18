@@ -1,0 +1,26 @@
+{
+  "name": "bullet",
+  "version": "0.0.1",
+  "description": "A simple implementation of reactive signals",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/adebola-io/bullet.git"
+  },
+  "keywords": [
+    "reactive",
+    "signals",
+    "events"
+  ],
+  "author": "<NAME>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/adebola-io/bullet/issues"
+  },
+  "homepage": "https://github.com/adebola-io/bullet#readme",
+  "dependencies": {}
+}
