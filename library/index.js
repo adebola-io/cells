@@ -11,7 +11,7 @@ import { root } from './root.js';
 const Signal = {
   /**
    * Adds a global effect that runs before any Signal is updated.
-   * @param {(value: any) => void} effect - The effect function.
+   * @param {(value: unknown) => void} effect - The effect function.
    * @param {Partial<import('./root.js').GlobalEffectOptions>} [options] - The options for the effect.
    * @example
    * ```
@@ -29,7 +29,7 @@ const Signal = {
 
   /**
    * Adds a global post-update effect to the Signal system.
-   * @param {(value: any) => void} effect - The effect function to add.
+   * @param {(value: unknown) => void} effect - The effect function to add.
    * @param {Partial<import('./root.js').GlobalEffectOptions>} [options] - Options for the effect.
    * @example
    * ```
@@ -53,7 +53,7 @@ const Signal = {
 
   /**
    * Removes a global effect.
-   * @param {(value: any) => void} effect - The effect function added previously.
+   * @param {(value: unknown) => void} effect - The effect function added previously.
    * @example
    * ```
    * import { Signal } from '@adbl/bullet';

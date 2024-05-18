@@ -1,6 +1,6 @@
 /**
- * @typedef {import('./classes.js').Watchable<any>} Watchable
- * @typedef {import('./classes.js').DerivedSignal<any>} Derived
+ * @typedef {import('./classes.js').Watchable<unknown>} Watchable
+ * @typedef {import('./classes.js').DerivedSignal<unknown>} Derived
  *
  * @typedef GlobalEffectOptions
  * @property {boolean} runOnce - Whether the effect should be removed after the first run.
@@ -10,19 +10,19 @@
 export const root = {
   /**
    * An array of global effects that run before a source Signal is updated.
-   * @type {[Partial<GlobalEffectOptions>, ((value: any) => void)][]}
+   * @type {[Partial<GlobalEffectOptions>, ((value: unknown) => void)][]}
    */
   globalPreEffects: [],
 
   /**
    * An array of global effects that run after a source Signal is updated.
-   * @type {[Partial<GlobalEffectOptions>, ((value: any) => void)][]}
+   * @type {[Partial<GlobalEffectOptions>, ((value: unknown) => void)][]}
    */
   globalPostEffects: [],
 
   /**
    * A WeakMap that stores watchers for every Signal.
-   * @type {WeakMap<Watchable, ((newValue: any) => void)[]>}
+   * @type {WeakMap<Watchable, ((newValue: unknown) => void)[]>}
    */
   watchers: new WeakMap(),
 

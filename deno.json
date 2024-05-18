@@ -1,0 +1,13 @@
+{
+  "name": "@adbl/signals",
+  "version": "1.0.0",
+  "exports": "./index.js",
+  "publish": {
+    "exclude": [
+      "**/*.test.js",
+      "bun.lockb",
+      "package-lock.json",
+      "jsconfig.json"
+    ]
+  }
+}

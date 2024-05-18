@@ -46,9 +46,11 @@ export class Watchable {
   createEffect(effect) {
     const watchList = root.watchers.get(this);
     if (watchList === undefined) {
+      // @ts-ignore
       root.watchers.set(this, [effect]);
       return () => this.removeEffect(effect);
     }
+    // @ts-ignore
     watchList.push(effect);
 
     return () => this.removeEffect(effect);
@@ -64,6 +66,7 @@ export class Watchable {
     if (watchList === undefined) {
       return;
     }
+    // @ts-ignore
     const index = watchList.indexOf(effect);
     if (index === -1) {
       return;
@@ -137,12 +140,18 @@ export class DerivedSignal extends Watchable {
     activeComputedValues.pop();
   }
 
+  /**
+   * @readonly
+   */
   get value() {
     return this.rvalue;
   }
 
+  /**
+   * @readonly
+   */
   set value(value) {
-    throw new Error('Cannot set a computed Signal value.');
+    throw new Error('Cannot set a derived Signal value.');
   }
 
   /**
@@ -210,6 +219,7 @@ export class SourceSignal extends Watchable {
   }
 
   /**
+   * @private
    * @param {T} value
    * @returns {T}
    */

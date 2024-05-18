@@ -1,9 +1,11 @@
 {
-  "name": "bullet",
+  "name": "@adbl/signals",
   "version": "0.0.1",
   "description": "A simple implementation of reactive signals",
   "main": "index.js",
   "type": "module",
+  "module": "./index.js",
+  "typings": "./index.d.ts",
   "scripts": {
     "test": "vitest"
   },
@@ -23,6 +25,7 @@
   },
   "homepage": "https://github.com/adebola-io/bullet#readme",
   "devDependencies": {
+    "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   }
 }
