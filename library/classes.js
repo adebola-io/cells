@@ -21,7 +21,7 @@ export class Watchable {
    * The value stored in the Signal.
    * @protected @type {T}
    */
-  get rvalue() {
+  get revalued() {
     const { dependencyGraph } = root;
     if (!dependencyGraph.has(this)) {
       dependencyGraph.set(this, []);
@@ -46,7 +46,7 @@ export class Watchable {
   createEffect(effect) {
     const watchList = root.watchers.get(this);
     if (watchList === undefined) {
-      // @ts-ignore
+      // @ts-ignore: effects can be functions of any type.
       root.watchers.set(this, [effect]);
       return () => this.removeEffect(effect);
     }
@@ -83,6 +83,11 @@ export class Watchable {
     const watchers = root.watchers.get(this);
     if (watchers !== undefined) {
       for (const watcher of watchers) {
+        if (root.batchNestingLevel > 0) {
+          root.batchedEffects.set(watcher, [this.wvalue]);
+          continue;
+        }
+
         watcher(this.wvalue);
       }
     }
@@ -144,7 +149,7 @@ export class DerivedSignal extends Watchable {
    * @readonly
    */
   get value() {
-    return this.rvalue;
+    return this.revalued;
   }
 
   /**
@@ -165,7 +170,12 @@ export class DerivedSignal extends Watchable {
       effect(this.wvalue);
     }
 
-    this.setValue(this.#computedFn());
+    if (root.batchNestingLevel > 0) {
+      root.batchedEffects.set(() => this.setValue(this.#computedFn()), []);
+    } else {
+      this.setValue(this.#computedFn());
+    }
+
     super.update();
   }
 }
@@ -187,7 +197,7 @@ export class SourceSignal extends Watchable {
   }
 
   get value() {
-    return this.rvalue;
+    return this.revalued;
   }
 
   /**
@@ -230,7 +240,7 @@ export class SourceSignal extends Watchable {
 
     return new Proxy(value, {
       get: (target, prop) => {
-        this.rvalue;
+        this.revalued;
         // @ts-ignore
         return this.proxify(target[prop]);
       },

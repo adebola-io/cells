@@ -15,7 +15,7 @@ export class Watchable<T> {
      * The value stored in the Signal.
      * @protected @type {T}
      */
-    protected get rvalue(): T;
+    protected get revalued(): T;
     /**
      * Subscribes the provided effect function to the root's watcher list.
      * If the current instance does not have a watcher list, a new one is created.

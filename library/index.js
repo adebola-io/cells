@@ -110,6 +110,22 @@ const Signal = {
    * ```
    */
   derived: (callback) => new DerivedSignal(callback),
+
+  /**
+   * Batches all the effects created to run only once.
+   * @param {() => void} callback - The function to be executed in a batched manner.
+   */
+  batch: (callback) => {
+    root.batchNestingLevel++;
+    callback();
+    root.batchNestingLevel--;
+    if (root.batchNestingLevel === 0) {
+      for (const [effect, args] of root.batchedEffects) {
+        effect(...args);
+      }
+      root.batchedEffects = new Map();
+    }
+  },
 };
 
 export { SourceSignal, DerivedSignal, Signal };

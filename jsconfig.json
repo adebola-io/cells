@@ -16,5 +16,6 @@
 
     "outDir": "types"
   },
-  "include": ["library/**/*", "index.js"]
+  "include": ["library/**/*", "index.js"],
+  "exclude": ["types/**/*", "tests/**/*"]
 }

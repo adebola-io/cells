@@ -3,6 +3,8 @@ export namespace root {
     let globalPostEffects: [Partial<GlobalEffectOptions>, ((value: unknown) => void)][];
     let watchers: WeakMap<import("./classes.js").Watchable<unknown>, ((newValue: unknown) => void)[]>;
     let dependencyGraph: WeakMap<import("./classes.js").Watchable<unknown>, import("./classes.js").DerivedSignal<unknown>[]>;
+    let batchNestingLevel: number;
+    let batchedEffects: Map<Function, any[]>;
 }
 /**
  * A value representing the computed values that are currently being calculated.

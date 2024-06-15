@@ -8,5 +8,6 @@ export namespace Signal {
     function removeGlobalEffect(effect: (value: unknown) => void): void;
     function source<T>(value: T): SourceSignal<T>;
     function derived<T>(callback: () => T): DerivedSignal<T>;
+    function batch(callback: () => void): void;
 }
 export { SourceSignal, DerivedSignal };

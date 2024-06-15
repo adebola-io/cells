@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { Signal, SourceSignal } from '../library/index.js';
+import { Signal } from '../library/index.js';
 
 beforeEach(() => {
   Signal.removeGlobalEffects();
@@ -62,7 +62,7 @@ describe('Effects', () => {
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
-  test('Signal should handle multiple subscriptions and unsubscriptions', () => {
+  test('Signal should handle multiple subscriptions and un-subscriptions', () => {
     const signal = Signal.source(1);
     const callback1 = vi.fn();
     const callback2 = vi.fn();
@@ -134,7 +134,6 @@ describe('Global Effects', () => {
   });
 
   test('Global effects run after', () => {
-    const callback = vi.fn();
     Signal.afterUpdate(() => {
       expect(signal.value).toBe(2);
     });
@@ -215,6 +214,18 @@ describe('Derived signals', () => {
     signal3.value = 6;
     expect(callback).toHaveBeenCalledTimes(3);
     expect(callback).toHaveBeenCalledWith(15);
+  });
+
+  test('Derived signals should not depend on same signal multiple times', () => {
+    const signal = Signal.source(1);
+    const callback = vi.fn();
+    signal.createEffect(callback);
+
+    const derived1 = Signal.derived(() => signal.value + signal.value);
+    expect(derived1.value).toBe(2);
+
+    signal.value = 3;
+    expect(callback).toHaveBeenCalledTimes(1);
   });
 
   test('Derived signal should handle nested dependencies', () => {
@@ -349,5 +360,59 @@ describe('Nested signals', () => {
     signal.value[0]++;
 
     expect(derived.value).toEqual([7, 7, 8]);
+  });
+});
+
+describe('Batched effects', () => {
+  test('Batched effects should run only once', () => {
+    const callback = vi.fn();
+
+    const signal = Signal.source(1);
+    signal.createEffect(callback);
+
+    Signal.batch(() => {
+      signal.value = 2;
+      signal.value = 3;
+    });
+
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  test('Batched derived signals should only be derived once.', () => {
+    const callback = vi.fn();
+
+    const signal = Signal.source(2);
+    const derived = Signal.derived(() => {
+      callback();
+      return signal.value * 2;
+    });
+
+    Signal.batch(() => {
+      signal.value = 80;
+      signal.value = 100;
+
+      expect(derived.value).toEqual(4);
+    });
+
+    expect(callback).toHaveBeenCalled(1);
+    expect(derived.value).toEqual(200);
+  });
+
+  test('Nested batched effects should still only run once', () => {
+    const callback = vi.fn();
+    const signal = Signal.source(2);
+    signal.createEffect(callback);
+
+    Signal.batch(() => {
+      signal.value = 100;
+      signal.value = 90;
+
+      Signal.batch(() => {
+        signal.value = 10;
+        signal.value = 1;
+      });
+    });
+
+    expect(callback).toHaveBeenCalled(1);
   });
 });

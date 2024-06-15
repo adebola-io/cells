@@ -31,6 +31,21 @@ export const root = {
    * @type {WeakMap<Watchable, Derived[]>}
    */
   dependencyGraph: new WeakMap(),
+
+  /**
+   * The nesting level of batch operations.
+   * This will prevent nested batch operations from triggering effects when they finish.
+   * @type {number}
+   */
+  batchNestingLevel: 0,
+
+  /**
+   * A map of effect tuples to be executed in a batch.
+   * The key in each entry is the effect, and the value is the list of arguments call it with.
+   * All callbacks in this map  will be executed only once in a batch.
+   * @type {Map<Function, any[]>}
+   */
+  batchedEffects: new Map(),
 };
 
 /**
