@@ -1,2 +1,4 @@
 tests/
 deno.json
+deno.lock
+bun.lockdb
