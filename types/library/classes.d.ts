@@ -94,6 +94,33 @@ export class Signal<T> {
      */
     static batch: (callback: () => void) => void;
     /**
+     * Checks if the provided value is an instance of the Signal class.
+     * @param {any} value - The value to check.
+     * @returns {value is Signal<any>} True if the value is an instance of Signal, false otherwise.
+     */
+    static isSignal: (value: any) => value is Signal<any>;
+    /**
+     * @template T
+     * Flattens the provided value by returning the value if it is not a Signal instance, or the value of the Signal instance if it is.
+     * @param {T | Signal<T>} value - The value to be flattened.
+     * @returns {T extends Signal<infer U> ? U : T} The flattened value.
+     */
+    static flatten: <T_3>(value: T_3 | Signal<T_3>) => T_3 extends Signal<infer U> ? U : T_3;
+    /**
+     * Flattens an array by applying the `flatten` function to each element.
+     * @template T
+     * @param {Array<T | Signal<T>>} array - The array to be flattened.
+     * @returns {Array<T>} A new array with the flattened elements.
+     */
+    static flattenArray: <T_4>(array: (T_4 | Signal<T_4>)[]) => T_4[];
+    /**
+     * Flattens an object by applying the `flatten` function to each value.
+     * @template {object} T
+     * @param {T} object - The object to be flattened.
+     * @returns {{ [K in keyof T]: T[K] extends Signal<infer U> ? U : T[K] }} A new object with the flattened values.
+     */
+    static flattenObject: <T_5 extends object>(object: T_5) => { [K in keyof T_5]: T_5[K] extends Signal<infer U_1> ? U_1 : T_5[K]; };
+    /**
      * @protected @type T
      */
     protected wvalue: T;
@@ -102,6 +129,11 @@ export class Signal<T> {
      * @param {T} value
      */
     protected setValue(value: T): void;
+    /**
+     * Overrides `Object.prototype.valueOf()` to return the value stored in the Signal.
+     * @returns {T} The value of the Signal.
+     */
+    valueOf(): T;
     /**
      * The value stored in the Signal.
      * @protected @type {T}

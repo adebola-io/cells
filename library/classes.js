@@ -18,6 +18,14 @@ export class Signal {
   }
 
   /**
+   * Overrides `Object.prototype.valueOf()` to return the value stored in the Signal.
+   * @returns {T} The value of the Signal.
+   */
+  valueOf() {
+    return this.wvalue;
+  }
+
+  /**
    * The value stored in the Signal.
    * @protected @type {T}
    */
@@ -253,6 +261,49 @@ export class Signal {
       }
       root.batchedEffects = new Map();
     }
+  };
+
+  /**
+   * Checks if the provided value is an instance of the Signal class.
+   * @param {any} value - The value to check.
+   * @returns {value is Signal<any>} True if the value is an instance of Signal, false otherwise.
+   */
+  static isSignal = (value) => value instanceof Signal;
+
+  /**
+   * @template T
+   * Flattens the provided value by returning the value if it is not a Signal instance, or the value of the Signal instance if it is.
+   * @param {T | Signal<T>} value - The value to be flattened.
+   * @returns {T extends Signal<infer U> ? U : T} The flattened value.
+   */
+  static flatten = (value) =>
+    // @ts-ignore
+    value instanceof Signal ? Signal.flatten(value.wvalue) : value;
+
+  /**
+   * Flattens an array by applying the `flatten` function to each element.
+   * @template T
+   * @param {Array<T | Signal<T>>} array - The array to be flattened.
+   * @returns {Array<T>} A new array with the flattened elements.
+   */
+  // @ts-ignore
+  static flattenArray = (array) => array.map(Signal.flatten);
+
+  /**
+   * Flattens an object by applying the `flatten` function to each value.
+   * @template {object} T
+   * @param {T} object - The object to be flattened.
+   * @returns {{ [K in keyof T]: T[K] extends Signal<infer U> ? U : T[K] }} A new object with the flattened values.
+   */
+  // @ts-ignore
+  static flattenObject = (object) => {
+    const result = {};
+    for (const [key, value] of Object.entries(object)) {
+      // @ts-ignore
+      result[key] = this.flatten(value);
+    }
+    // @ts-ignore
+    return result;
   };
 }
 

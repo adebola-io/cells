@@ -425,3 +425,35 @@ describe('Immediate effects', () => {
     expect(callback).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('Flattening', () => {
+  test('Flattening should work', () => {
+    const signal = Signal.source(1);
+    const value = Signal.flatten(signal);
+    expect(value).toBe(1);
+  });
+
+  test('Flattening should work with nested signals', () => {
+    const signal = Signal.source(Signal.source(1));
+    const value = Signal.flatten(signal);
+    expect(value).toBe(1);
+  });
+
+  test('Flattening should work with nested derived signals', () => {
+    const signal = Signal.source(Signal.source(1));
+    const value = Signal.flatten(Signal.derived(() => signal.value));
+    expect(value).toBe(1);
+  });
+
+  test('Flattening should work on arrays', () => {
+    const signal = [1, 2, Signal.source(3)];
+    const value = Signal.flattenArray(signal);
+    expect(value).toEqual([1, 2, 3]);
+  });
+
+  test('Flattening should work on objects', () => {
+    const signal = { a: 1, b: Signal.source(2) };
+    const value = Signal.flattenObject(signal);
+    expect(value).toEqual({ a: 1, b: 2 });
+  });
+});
