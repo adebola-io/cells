@@ -1,5 +1,5 @@
 /**
- * @typedef {import('./classes.js').Watchable<unknown>} Watchable
+ * @typedef {import('./classes.js').Signal<unknown>} Watchable
  * @typedef {import('./classes.js').DerivedSignal<unknown>} Derived
  *
  * @typedef GlobalEffectOptions

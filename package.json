@@ -1,6 +1,6 @@
 {
   "name": "@adbl/signals",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A simple implementation of reactive signals",
   "main": "index.js",
   "private": false,
@@ -20,7 +20,7 @@
     "signals",
     "events"
   ],
-  "author": "<NAME>",
+  "author": "Sefunmi Adebola Akomolafe",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/adebola-io/signals/issues"

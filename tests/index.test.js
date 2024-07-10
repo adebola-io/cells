@@ -416,3 +416,12 @@ describe('Batched effects', () => {
     expect(callback).toHaveBeenCalled(1);
   });
 });
+
+describe('Immediate effects', () => {
+  test('Immediate effects should run immediately', () => {
+    const callback = vi.fn();
+    const signal = Signal.source(1);
+    signal.createImmediateEffect(callback);
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+});

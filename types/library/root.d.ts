@@ -1,8 +1,8 @@
 export namespace root {
     let globalPreEffects: [Partial<GlobalEffectOptions>, ((value: unknown) => void)][];
     let globalPostEffects: [Partial<GlobalEffectOptions>, ((value: unknown) => void)][];
-    let watchers: WeakMap<import("./classes.js").Watchable<unknown>, ((newValue: unknown) => void)[]>;
-    let dependencyGraph: WeakMap<import("./classes.js").Watchable<unknown>, import("./classes.js").DerivedSignal<unknown>[]>;
+    let watchers: WeakMap<import("./classes.js").Signal<unknown>, ((newValue: unknown) => void)[]>;
+    let dependencyGraph: WeakMap<import("./classes.js").Signal<unknown>, import("./classes.js").DerivedSignal<unknown>[]>;
     let batchNestingLevel: number;
     let batchedEffects: Map<Function, any[]>;
 }
@@ -12,7 +12,7 @@ export namespace root {
  * @type {Derived[]}
  */
 export const activeComputedValues: import("./classes.js").DerivedSignal<unknown>[];
-export type Watchable = import('./classes.js').Watchable<unknown>;
+export type Watchable = import('./classes.js').Signal<unknown>;
 export type Derived = import('./classes.js').DerivedSignal<unknown>;
 export type GlobalEffectOptions = {
     /**
