@@ -1,6 +1,6 @@
 {
   "name": "@adbl/signals",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "description": "A simple implementation of reactive signals",
   "main": "index.js",
   "private": false,

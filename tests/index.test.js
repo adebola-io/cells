@@ -457,3 +457,42 @@ describe('Flattening', () => {
     expect(value).toEqual({ a: 1, b: 2 });
   });
 });
+
+describe('Signal.async', () => {
+  test('Should work with a simple function', () => {
+    const { data, run } = Signal.async(async () => await 1);
+    run().then(() => {
+      expect(data.value).toBe(1);
+    });
+  });
+
+  test('Should catch errors in getter function', () => {
+    const getter = async () => {
+      await true;
+      throw new Error('Something went wrong!');
+    };
+
+    const { data, error, run } = Signal.async(getter);
+    run().then(() => {
+      expect(data.value).toBe(null);
+      expect(error.value).toHaveProperty('message', 'Something went wrong!');
+    });
+  });
+
+  test('Should update loading state', () => {
+    const getter = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      return true;
+    };
+
+    const { data, run, pending } = Signal.async(getter);
+    run();
+    expect(data.value).toBe(null);
+    expect(pending.value).toBe(true);
+
+    setTimeout(() => {
+      expect(data.value).toBe(true);
+      expect(pending.value).toBe(false);
+    }, 4000);
+  });
+});

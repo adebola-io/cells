@@ -1,7 +1,7 @@
 export namespace root {
     let globalPreEffects: [Partial<GlobalEffectOptions>, ((value: unknown) => void)][];
     let globalPostEffects: [Partial<GlobalEffectOptions>, ((value: unknown) => void)][];
-    let watchers: WeakMap<import("./classes.js").Signal<unknown>, ((newValue: unknown) => void)[]>;
+    let watchers: WeakMap<import("./classes.js").Signal<unknown>, ((newValue: any) => void)[]>;
     let dependencyGraph: WeakMap<import("./classes.js").Signal<unknown>, import("./classes.js").DerivedSignal<unknown>[]>;
     let batchNestingLevel: number;
     let batchedEffects: Map<Function, any[]>;

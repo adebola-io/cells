@@ -17,7 +17,7 @@ export class Signal<T> {
      * signal.value = 2; // prints 2
      * ```
      */
-    static beforeUpdate: (effect: (value: unknown) => void, options?: Partial<import("./root.js").GlobalEffectOptions> | undefined) => number;
+    static beforeUpdate: (effect: (value: unknown) => void, options?: Partial<import("./root.js").GlobalEffectOptions> | undefined) => void;
     /**
      * Adds a global post-update effect to the Signal system.
      * @param {(value: unknown) => void} effect - The effect function to add.
@@ -103,9 +103,9 @@ export class Signal<T> {
      * @template T
      * Flattens the provided value by returning the value if it is not a Signal instance, or the value of the Signal instance if it is.
      * @param {T | Signal<T>} value - The value to be flattened.
-     * @returns {T extends Signal<infer U> ? U : T} The flattened value.
+     * @returns {T} The flattened value.
      */
-    static flatten: <T_3>(value: T_3 | Signal<T_3>) => T_3 extends Signal<infer U> ? U : T_3;
+    static flatten: <T_3>(value: T_3 | Signal<T_3>) => T_3;
     /**
      * Flattens an array by applying the `flatten` function to each element.
      * @template T
@@ -119,7 +119,25 @@ export class Signal<T> {
      * @param {T} object - The object to be flattened.
      * @returns {{ [K in keyof T]: T[K] extends Signal<infer U> ? U : T[K] }} A new object with the flattened values.
      */
-    static flattenObject: <T_5 extends object>(object: T_5) => { [K in keyof T_5]: T_5[K] extends Signal<infer U_1> ? U_1 : T_5[K]; };
+    static flattenObject: <T_5 extends object>(object: T_5) => { [K in keyof T_5]: T_5[K] extends Signal<infer U> ? U : T_5[K]; };
+    /**
+     * Wraps an asynchronous function with managed state.
+     *
+     * @template X - The type of the input parameter for the getter function.
+     * @template Y - The type of the output returned by the getter function.
+     * @param {(input: X) => Promise<Y>} getter - A function that performs the asynchronous operation.
+     * @returns {AsyncRequestAtoms<X, Y>} An object containing signals for pending, data, and error states,
+     *          as well as functions to run and reload the operation.
+     *
+     * @example
+     * const { pending, data, error, run, reload } = Signal.async(async (input) => {
+     *   const response = await fetch(`https://example.com/api/data?input=${input}`);
+     *   return response.json();
+     * });
+     *
+     * run('input');
+     */
+    static async<X, Y>(getter: (input: X) => Promise<Y>): AsyncRequestAtoms<X, Y>;
     /**
      * @protected @type T
      */
@@ -218,3 +236,25 @@ export class SourceSignal<T> extends Signal<T> {
      */
     private proxify;
 }
+export type AsyncRequestAtoms<Input, Output> = {
+    /**
+     * Represents the loading state of an asynchronous request.
+     */
+    pending: SourceSignal<boolean>;
+    /**
+     * Represents the data returned by the asynchronous request.
+     */
+    data: SourceSignal<Output | null>;
+    /**
+     * Represents the errors returned by the asynchronous request, if any.
+     */
+    error: SourceSignal<unknown | null>;
+    /**
+     * Triggers the asynchronous request.
+     */
+    run: Input extends undefined ? () => Promise<void> : (input: Input) => Promise<void>;
+    /**
+     * Triggers the asynchronous request again with an optional new input and optionally changes the loading state.
+     */
+    reload: (newInput?: Input, changeLoadingState?: boolean) => Promise<void>;
+};

@@ -1,3 +1,22 @@
+/**
+ * @template Input, Output
+ * @typedef {Object} AsyncRequestAtoms
+ *
+ * @property {SourceSignal<boolean>} pending
+ * Represents the loading state of an asynchronous request.
+ *
+ * @property {SourceSignal<Output|null>} data
+ * Represents the data returned by the asynchronous request.
+ *
+ * @property {SourceSignal<unknown | null>} error
+ * Represents the errors returned by the asynchronous request, if any.
+ *
+ * @property {Input extends undefined ? () => Promise<void> : (input: Input) => Promise<void>} run
+ * Triggers the asynchronous request.
+ *
+ * @property {(newInput?: Input, changeLoadingState?: boolean) => Promise<void>} reload Triggers the asynchronous request again with an optional new input and optionally changes the loading state.
+ */
+
 import { activeComputedValues, root } from './root.js';
 
 /**
@@ -54,11 +73,9 @@ export class Signal {
   createEffect(effect) {
     const watchList = root.watchers.get(this);
     if (watchList === undefined) {
-      // @ts-ignore: effects can be functions of any type.
       root.watchers.set(this, [effect]);
       return () => this.removeEffect(effect);
     }
-    // @ts-ignore
     watchList.push(effect);
 
     return () => this.removeEffect(effect);
@@ -87,7 +104,6 @@ export class Signal {
     if (watchList === undefined) {
       return;
     }
-    // @ts-ignore
     const index = watchList.indexOf(effect);
     if (index === -1) {
       return;
@@ -160,8 +176,9 @@ export class Signal {
    * signal.value = 2; // prints 2
    * ```
    */
-  static beforeUpdate = (effect, options) =>
+  static beforeUpdate = (effect, options) => {
     root.globalPreEffects.push([options ?? {}, effect]);
+  };
 
   /**
    * Adds a global post-update effect to the Signal system.
@@ -274,11 +291,18 @@ export class Signal {
    * @template T
    * Flattens the provided value by returning the value if it is not a Signal instance, or the value of the Signal instance if it is.
    * @param {T | Signal<T>} value - The value to be flattened.
-   * @returns {T extends Signal<infer U> ? U : T} The flattened value.
+   * @returns {T} The flattened value.
    */
-  static flatten = (value) =>
-    // @ts-ignore
-    value instanceof Signal ? Signal.flatten(value.wvalue) : value;
+  static flatten = (value) => {
+    // @ts-ignore:
+    return value instanceof Signal
+      ? Signal.flatten(value.wvalue)
+      : Array.isArray(value)
+      ? Signal.flattenArray(value)
+      : value instanceof Object
+      ? Signal.flattenObject(value)
+      : value;
+  };
 
   /**
    * Flattens an array by applying the `flatten` function to each element.
@@ -286,7 +310,6 @@ export class Signal {
    * @param {Array<T | Signal<T>>} array - The array to be flattened.
    * @returns {Array<T>} A new array with the flattened elements.
    */
-  // @ts-ignore
   static flattenArray = (array) => array.map(Signal.flatten);
 
   /**
@@ -295,16 +318,87 @@ export class Signal {
    * @param {T} object - The object to be flattened.
    * @returns {{ [K in keyof T]: T[K] extends Signal<infer U> ? U : T[K] }} A new object with the flattened values.
    */
-  // @ts-ignore
   static flattenObject = (object) => {
     const result = {};
     for (const [key, value] of Object.entries(object)) {
-      // @ts-ignore
-      result[key] = this.flatten(value);
+      // @ts-ignore:
+      result[key] = Signal.flatten(value);
     }
-    // @ts-ignore
+    // @ts-ignore:
     return result;
   };
+
+  /**
+   * Wraps an asynchronous function with managed state.
+   *
+   * @template X - The type of the input parameter for the getter function.
+   * @template Y - The type of the output returned by the getter function.
+   * @param {(input: X) => Promise<Y>} getter - A function that performs the asynchronous operation.
+   * @returns {AsyncRequestAtoms<X, Y>} An object containing signals for pending, data, and error states,
+   *          as well as functions to run and reload the operation.
+   *
+   * @example
+   * const { pending, data, error, run, reload } = Signal.async(async (input) => {
+   *   const response = await fetch(`https://example.com/api/data?input=${input}`);
+   *   return response.json();
+   * });
+   *
+   * run('input');
+   */
+  static async(getter) {
+    const pending = Signal.source(false);
+    /** @type {SourceSignal<Y | null>} */
+    const data = Signal.source(null);
+    /** @type {SourceSignal<unknown | null>} */
+    const error = Signal.source(null);
+
+    /** @type {X | undefined} */
+    let initialInput = undefined;
+
+    async function run(input = initialInput) {
+      pending.value = true;
+      try {
+        initialInput = input;
+        // @ts-ignore:
+        const result = await getter(input);
+        data.value = result;
+      } catch (e) {
+        error.value = e;
+      } finally {
+        pending.value = false;
+      }
+    }
+
+    /**
+     * @param {X} [newInput]
+     * @param {boolean} [changeLoadingState]
+     */
+    async function reload(newInput, changeLoadingState = true) {
+      if (changeLoadingState) {
+        pending.value = true;
+      }
+      try {
+        // @ts-ignore:
+        const result = await getter(newInput ?? initialInput);
+        data.value = result;
+      } catch (e) {
+        error.value = e;
+      } finally {
+        if (changeLoadingState) {
+          pending.value = false;
+        }
+      }
+    }
+
+    return {
+      pending,
+      data,
+      error,
+      // @ts-ignore:
+      run,
+      reload,
+    };
+  }
 }
 
 /**
@@ -423,11 +517,11 @@ export class SourceSignal extends Signal {
     return new Proxy(value, {
       get: (target, prop) => {
         this.revalued;
-        // @ts-ignore
+        // @ts-ignore:
         return this.proxify(target[prop]);
       },
       set: (target, prop, value) => {
-        // @ts-ignore
+        // @ts-ignore:
         target[prop] = value;
         this.update();
         return true;

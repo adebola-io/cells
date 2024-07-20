@@ -22,7 +22,7 @@ export const root = {
 
   /**
    * A WeakMap that stores watchers for every Signal.
-   * @type {WeakMap<Watchable, ((newValue: unknown) => void)[]>}
+   * @type {WeakMap<Watchable, ((newValue: any) => void)[]>}
    */
   watchers: new WeakMap(),
 
