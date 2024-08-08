@@ -1,30 +1,30 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { Signal } from '../library/index.js';
+import { Cell, SourceCell } from '../library/index.js';
 
 beforeEach(() => {
-  Signal.removeGlobalEffects();
+  Cell.removeGlobalEffects();
 });
 
-describe('Signals', () => {
-  test('Creates a reactive Signal of type T', () => {
-    const signal = Signal.source(1);
-    expect(signal.value).toBe(1);
+describe('Cells', () => {
+  test('Creates a reactive Cell of type T', () => {
+    const cell = Cell.source(1);
+    expect(cell.value).toBe(1);
   });
 
-  test('Signal should be reactive', () => {
-    const signal = Signal.source(1);
+  test('Cell should be reactive', () => {
+    const cell = Cell.source(1);
     const callback = vi.fn();
-    signal.createEffect(callback);
-    signal.value = 2;
+    cell.subscribe(callback);
+    cell.value = 2;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(2);
   });
 
-  test('Signal should handle built-in operators', () => {
-    const signal = Signal.source(1);
+  test('Cell should handle built-in operators', () => {
+    const cell = Cell.source(1);
     const callback = vi.fn();
-    const unsubscribe = signal.createEffect(callback);
-    signal.value += 2;
+    const unsubscribe = cell.subscribe(callback);
+    cell.value += 2;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(3);
     unsubscribe();
@@ -32,56 +32,56 @@ describe('Signals', () => {
 });
 
 describe('Effects', () => {
-  test('Signal should handle nested subscriptions', () => {
-    const signal = Signal.source(1);
+  test('Cell should handle nested subscriptions', () => {
+    const cell = Cell.source(1);
     const callback1 = vi.fn();
     const callback2 = vi.fn();
-    const unsubscribe1 = signal.createEffect(callback1);
-    const unsubscribe2 = signal.createEffect(callback2);
-    signal.value = 2;
+    const unsubscribe1 = cell.subscribe(callback1);
+    const unsubscribe2 = cell.subscribe(callback2);
+    cell.value = 2;
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback1).toHaveBeenCalledWith(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledWith(2);
     unsubscribe1();
-    signal.value = 3;
+    cell.value = 3;
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledWith(3);
     unsubscribe2();
   });
 
-  test('Signal should handle unsubscribe', () => {
-    const signal = Signal.source(1);
+  test('Cell should handle unsubscribe', () => {
+    const cell = Cell.source(1);
     const callback = vi.fn();
-    const unsubscribe = signal.createEffect(callback);
-    signal.value = 2;
+    const unsubscribe = cell.subscribe(callback);
+    cell.value = 2;
     expect(callback).toHaveBeenCalledTimes(1);
     unsubscribe();
-    signal.value = 3;
+    cell.value = 3;
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
-  test('Signal should handle multiple subscriptions and un-subscriptions', () => {
-    const signal = Signal.source(1);
+  test('Cell should handle multiple subscriptions and un-subscriptions', () => {
+    const cell = Cell.source(1);
     const callback1 = vi.fn();
     const callback2 = vi.fn();
     const callback3 = vi.fn();
-    const unsubscribe1 = signal.createEffect(callback1);
-    const unsubscribe2 = signal.createEffect(callback2);
-    const unsubscribe3 = signal.createEffect(callback3);
-    signal.value = 2;
+    const unsubscribe1 = cell.subscribe(callback1);
+    const unsubscribe2 = cell.subscribe(callback2);
+    const unsubscribe3 = cell.subscribe(callback3);
+    cell.value = 2;
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(1);
     unsubscribe2();
-    signal.value = 3;
+    cell.value = 3;
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
     unsubscribe1();
     unsubscribe3();
-    signal.value = 4;
+    cell.value = 4;
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
@@ -89,275 +89,273 @@ describe('Effects', () => {
 });
 
 describe('Global Effects', () => {
-  test('Global effects should run on all signals', () => {
+  test('Global effects should run on all cells', () => {
     const callback = vi.fn();
-    Signal.beforeUpdate(callback);
-    const signal = Signal.source(1);
+    Cell.beforeUpdate(callback);
+    const cell = Cell.source(1);
     expect(callback).toHaveBeenCalledTimes(0);
 
-    signal.value = 2;
+    cell.value = 2;
     expect(callback).toHaveBeenCalledTimes(1);
 
-    const derived = Signal.derived(() => signal.value + 1);
-    signal.value = 20;
+    const derived = Cell.derived(() => cell.value + 1);
+    cell.value = 20;
 
     expect(callback).toHaveBeenCalledTimes(3);
   });
 
   test('Global effects set to run once should only run once', () => {
     const callback = vi.fn();
-    Signal.beforeUpdate(callback, {
+    Cell.beforeUpdate(callback, {
       runOnce: true,
     });
-    const signal = Signal.source(1);
-    signal.value = 2;
+    const cell = Cell.source(1);
+    cell.value = 2;
 
     expect(callback).toHaveBeenCalledTimes(1);
 
-    signal.value = 3;
+    cell.value = 3;
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
   test('Global effects run before', () => {
-    Signal.beforeUpdate(
+    Cell.beforeUpdate(
       () => {
-        expect(signal.value).toBe(1);
+        expect(cell.value).toBe(1);
         expect(derived.value).toBe(3);
       },
       {
-        ignoreDerivedSignals: true,
+        ignoreDerivedCells: true,
       }
     );
-    const signal = Signal.source(1);
-    const derived = Signal.derived(() => signal.value * 3);
-    signal.value = 8;
+    const cell = Cell.source(1);
+    const derived = Cell.derived(() => cell.value * 3);
+    cell.value = 8;
   });
 
   test('Global effects run after', () => {
-    Signal.afterUpdate(() => {
-      expect(signal.value).toBe(2);
+    Cell.afterUpdate(() => {
+      expect(cell.value).toBe(2);
     });
 
-    const signal = Signal.source(1);
-    signal.value = 2;
+    const cell = Cell.source(1);
+    cell.value = 2;
   });
 
-  test('Global effects set to ignore derived signals should ignore derived signals', () => {
+  test('Global effects set to ignore derived cells should ignore derived cells', () => {
     const callback = vi.fn();
-    Signal.beforeUpdate(callback, {
-      ignoreDerivedSignals: true,
+    Cell.beforeUpdate(callback, {
+      ignoreDerivedCells: true,
     });
-    const signal = Signal.source(1);
-    const derived = Signal.derived(() => signal.value + 1);
+    const cell = Cell.source(1);
+    const derived = Cell.derived(() => cell.value + 1);
 
-    signal.value = 2;
+    cell.value = 2;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(derived.value).toBe(3);
   });
 });
 
-describe('Derived signals', () => {
-  test('Creates a reactive Derived signal of type T', () => {
-    const signal1 = Signal.source(1);
-    const signal2 = Signal.source(2);
-    const derived = Signal.derived(() => signal1.value + signal2.value);
+describe('Derived cells', () => {
+  test('Creates a reactive Derived cell of type T', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2);
+    const derived = Cell.derived(() => cell1.value + cell2.value);
     expect(derived.value).toBe(3);
   });
 
-  test('Derived signal objects should be reactive', () => {
-    const signal1 = Signal.source(1);
-    const signal2 = Signal.source(2);
-    const derived = Signal.derived(() => ({
-      a: signal1.value + signal2.value,
+  test('Derived cell objects should be reactive', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2);
+    const derived = Cell.derived(() => ({
+      a: cell1.value + cell2.value,
     }));
-    const a = Signal.derived(() => derived.value.a);
+    const a = Cell.derived(() => derived.value.a);
     expect(derived.value).toEqual({ a: 3 });
 
-    signal1.value = 3;
+    cell1.value = 3;
     expect(a.value).toEqual(5);
   });
 
-  test('Derived signal should be reactive', () => {
-    const signal1 = Signal.source(1);
-    const signal2 = Signal.source(2);
-    const derived = Signal.derived(() => signal1.value + signal2.value);
+  test('Derived cell should be reactive', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2);
+    const derived = Cell.derived(() => cell1.value + cell2.value);
     const callback = vi.fn();
-    derived.createEffect(callback);
-    signal1.value = 3;
+    derived.subscribe(callback);
+    cell1.value = 3;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(5);
 
-    const name = Signal.source('John');
-    const surname = Signal.source('Smith');
-    const fullname = Signal.derived(() => `${name.value} ${surname.value}`);
+    const name = Cell.source('John');
+    const surname = Cell.source('Smith');
+    const fullname = Cell.derived(() => `${name.value} ${surname.value}`);
     expect(fullname.value).toBe('John Smith');
 
     name.value = 'Jane';
     expect(fullname.value).toBe('Jane Smith');
   });
 
-  test('Derived signal should handle multiple dependencies', () => {
-    const signal1 = Signal.source(1);
-    const signal2 = Signal.source(2);
-    const signal3 = Signal.source(3);
-    const derived = Signal.derived(
-      () => signal1.value + signal2.value + signal3.value
-    );
+  test('Derived cell should handle multiple dependencies', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2);
+    const cell3 = Cell.source(3);
+    const derived = Cell.derived(() => cell1.value + cell2.value + cell3.value);
     const callback = vi.fn();
-    derived.createEffect(callback);
-    signal1.value = 4;
+    derived.subscribe(callback);
+    cell1.value = 4;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(9);
-    signal2.value = 5;
+    cell2.value = 5;
     expect(callback).toHaveBeenCalledTimes(2);
     expect(callback).toHaveBeenCalledWith(12);
-    signal3.value = 6;
+    cell3.value = 6;
     expect(callback).toHaveBeenCalledTimes(3);
     expect(callback).toHaveBeenCalledWith(15);
   });
 
-  test('Derived signals should not depend on same signal multiple times', () => {
-    const signal = Signal.source(1);
+  test('Derived cells should not depend on same cell multiple times', () => {
+    const cell = Cell.source(1);
     const callback = vi.fn();
-    signal.createEffect(callback);
+    cell.subscribe(callback);
 
-    const derived1 = Signal.derived(() => signal.value + signal.value);
+    const derived1 = Cell.derived(() => cell.value + cell.value);
     expect(derived1.value).toBe(2);
 
-    signal.value = 3;
+    cell.value = 3;
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
-  test('Derived signal should handle nested dependencies', () => {
-    const signal1 = Signal.source(1);
-    const signal2 = Signal.source(2);
-    const derived1 = Signal.derived(() => signal1.value + signal2.value);
-    const derived2 = Signal.derived(() => derived1.value * 2);
+  test('Derived cell should handle nested dependencies', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2);
+    const derived1 = Cell.derived(() => cell1.value + cell2.value);
+    const derived2 = Cell.derived(() => derived1.value * 2);
     const callback = vi.fn();
-    derived2.createEffect(callback);
-    signal1.value = 3;
+    derived2.subscribe(callback);
+    cell1.value = 3;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(10);
-    signal2.value = 4;
+    cell2.value = 4;
     expect(callback).toHaveBeenCalledTimes(2);
     expect(callback).toHaveBeenCalledWith(14);
   });
 
-  test('Derived signal should handle circular dependencies', () => {
-    const signal1 = Signal.source(1);
-    const signal2 = Signal.source(2); // 4
-    const derived1 = Signal.derived(() => signal2.value + 1);
-    const derived2 = Signal.derived(() => derived1.value + signal1.value);
+  test('Derived cell should handle circular dependencies', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2); // 4
+    const derived1 = Cell.derived(() => cell2.value + 1);
+    const derived2 = Cell.derived(() => derived1.value + cell1.value);
 
-    signal2.value = derived2.value;
-    expect(signal2.value).toBe(4);
+    cell2.value = derived2.value;
+    expect(cell2.value).toBe(4);
     expect(derived2.value).toBe(6);
 
     const callback = vi.fn();
-    derived2.createEffect(callback);
+    derived2.subscribe(callback);
 
-    signal1.value = 3;
+    cell1.value = 3;
 
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(8);
   });
 
-  test('Derived signal should handle multiple subscriptions and unsubscriptions', () => {
-    const signal1 = Signal.source(1);
-    const signal2 = Signal.source(2);
-    const derived = Signal.derived(() => signal1.value + signal2.value);
+  test('Derived cell should handle multiple subscriptions and unsubscriptions', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2);
+    const derived = Cell.derived(() => cell1.value + cell2.value);
     const callback1 = vi.fn();
     const callback2 = vi.fn();
     const callback3 = vi.fn();
-    const unsubscribe1 = derived.createEffect(callback1);
-    const unsubscribe2 = derived.createEffect(callback2);
-    const unsubscribe3 = derived.createEffect(callback3);
-    signal1.value = 3;
+    const unsubscribe1 = derived.subscribe(callback1);
+    const unsubscribe2 = derived.subscribe(callback2);
+    const unsubscribe3 = derived.subscribe(callback3);
+    cell1.value = 3;
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(1);
     unsubscribe2();
-    signal2.value = 4;
+    cell2.value = 4;
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
     unsubscribe1();
     unsubscribe3();
-    signal1.value = 5;
+    cell1.value = 5;
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
   });
 });
 
-describe('Nested signals', () => {
-  test('Signal of object type should be reactive', () => {
-    const signal = Signal.source({ a: 1 });
-    const signal2 = Signal.source({ b: 10 });
+describe('Nested cells', () => {
+  test('Cell of object type should be reactive', () => {
+    const cell = Cell.source({ a: 1 });
+    const cell2 = Cell.source({ b: 10 });
 
-    const derived = Signal.derived(() => signal.value.a + signal2.value.b);
+    const derived = Cell.derived(() => cell.value.a + cell2.value.b);
 
-    signal.value.a = 2;
+    cell.value.a = 2;
     expect(derived.value).toBe(12);
 
-    signal2.value.b = 20;
+    cell2.value.b = 20;
     expect(derived.value).toBe(22);
   });
 
-  test('Signal of array type should be reactive', () => {
-    const signal = Signal.source([1, 2, 3]);
+  test('Cell of array type should be reactive', () => {
+    const cell = Cell.source([1, 2, 3]);
 
-    const sum = Signal.derived(() => signal.value.reduce((a, b) => a + b, 0));
+    const sum = Cell.derived(() => cell.value.reduce((a, b) => a + b, 0));
     expect(sum.value).toBe(6);
 
-    signal.value[0] = 3;
+    cell.value[0] = 3;
     expect(sum.value).toBe(8);
 
-    signal.value.push(4);
+    cell.value.push(4);
     expect(sum.value).toBe(12);
 
-    signal.value.pop();
+    cell.value.pop();
     expect(sum.value).toBe(8);
   });
 
-  test('Signal of nested array type should be reactive', () => {
-    /** @type {SourceSignal<[number, [number, number], number]>} */
-    const signal = Signal.source([1, [2, 3], 4]);
-    const d1 = Signal.derived(() => signal.value[1][1] + 2);
-    const d2 = Signal.derived(() => signal.value[1][0] + d1.value);
+  test('Cell of nested array type should be reactive', () => {
+    /** @type {SourceCell<[number, [number, number], number]>} */
+    const cell = Cell.source([1, [2, 3], 4]);
+    const d1 = Cell.derived(() => cell.value[1][1] + 2);
+    const d2 = Cell.derived(() => cell.value[1][0] + d1.value);
 
     expect(d1.value).toBe(5);
     expect(d2.value).toBe(7);
-    signal.value[1][1] = 5;
+    cell.value[1][1] = 5;
 
     expect(d1.value).toBe(7);
     expect(d2.value).toBe(9);
   });
 
-  test('Signal should handle built-in operators on objects', () => {
-    const signal = Signal.source({ a: 1, b: 2 });
-    const derived = Signal.derived(() => signal.value.a + signal.value.b);
+  test('Cell should handle built-in operators on objects', () => {
+    const cell = Cell.source({ a: 1, b: 2 });
+    const derived = Cell.derived(() => cell.value.a + cell.value.b);
 
-    signal.value.a += 2;
+    cell.value.a += 2;
     expect(derived.value).toBe(5);
 
-    signal.value.b += 2;
+    cell.value.b += 2;
     expect(derived.value).toBe(7);
 
-    signal.value.a++;
+    cell.value.a++;
     expect(derived.value).toBe(8);
 
-    signal.value.b--;
+    cell.value.b--;
     expect(derived.value).toBe(7);
   });
 
-  test('Signal should handle built-in operators on arrays', () => {
-    const signal = Signal.source([1, 2, 3]);
-    const derived = Signal.derived(() => signal.value.map((x) => x + 5));
+  test('Cell should handle built-in operators on arrays', () => {
+    const cell = Cell.source([1, 2, 3]);
+    const derived = Cell.derived(() => cell.value.map((x) => x + 5));
 
     expect(derived.value).toEqual([6, 7, 8]);
 
-    signal.value[0]++;
+    cell.value[0]++;
 
     expect(derived.value).toEqual([7, 7, 8]);
   });
@@ -367,100 +365,100 @@ describe('Batched effects', () => {
   test('Batched effects should run only once', () => {
     const callback = vi.fn();
 
-    const signal = Signal.source(1);
-    signal.createEffect(callback);
+    const cell = Cell.source(1);
+    cell.subscribe(callback);
 
-    Signal.batch(() => {
-      signal.value = 2;
-      signal.value = 3;
+    Cell.batch(() => {
+      cell.value = 2;
+      cell.value = 3;
     });
 
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
-  test('Batched derived signals should only be derived once.', () => {
+  test('Batched derived cells should only be derived once.', () => {
     const callback = vi.fn();
 
-    const signal = Signal.source(2);
-    const derived = Signal.derived(() => {
+    const cell = Cell.source(2);
+    const derived = Cell.derived(() => {
       callback();
-      return signal.value * 2;
+      return cell.value * 2;
     });
 
-    Signal.batch(() => {
-      signal.value = 80;
-      signal.value = 100;
+    Cell.batch(() => {
+      cell.value = 80;
+      cell.value = 100;
 
       expect(derived.value).toEqual(4);
     });
 
-    expect(callback).toHaveBeenCalled(1);
+    expect(callback).toHaveBeenCalled();
     expect(derived.value).toEqual(200);
   });
 
   test('Nested batched effects should still only run once', () => {
     const callback = vi.fn();
-    const signal = Signal.source(2);
-    signal.createEffect(callback);
+    const cell = Cell.source(2);
+    cell.subscribe(callback);
 
-    Signal.batch(() => {
-      signal.value = 100;
-      signal.value = 90;
+    Cell.batch(() => {
+      cell.value = 100;
+      cell.value = 90;
 
-      Signal.batch(() => {
-        signal.value = 10;
-        signal.value = 1;
+      Cell.batch(() => {
+        cell.value = 10;
+        cell.value = 1;
       });
     });
 
-    expect(callback).toHaveBeenCalled(1);
+    expect(callback).toHaveBeenCalled();
   });
 });
 
 describe('Immediate effects', () => {
   test('Immediate effects should run immediately', () => {
     const callback = vi.fn();
-    const signal = Signal.source(1);
-    signal.createImmediateEffect(callback);
+    const cell = Cell.source(1);
+    cell.runAndSubscribe(callback);
     expect(callback).toHaveBeenCalledTimes(1);
   });
 });
 
 describe('Flattening', () => {
   test('Flattening should work', () => {
-    const signal = Signal.source(1);
-    const value = Signal.flatten(signal);
+    const cell = Cell.source(1);
+    const value = Cell.flatten(cell);
     expect(value).toBe(1);
   });
 
-  test('Flattening should work with nested signals', () => {
-    const signal = Signal.source(Signal.source(1));
-    const value = Signal.flatten(signal);
+  test('Flattening should work with nested cells', () => {
+    const cell = Cell.source(Cell.source(1));
+    const value = Cell.flatten(cell);
     expect(value).toBe(1);
   });
 
-  test('Flattening should work with nested derived signals', () => {
-    const signal = Signal.source(Signal.source(1));
-    const value = Signal.flatten(Signal.derived(() => signal.value));
+  test('Flattening should work with nested derived cells', () => {
+    const cell = Cell.source(Cell.source(1));
+    const value = Cell.flatten(Cell.derived(() => cell.value));
     expect(value).toBe(1);
   });
 
   test('Flattening should work on arrays', () => {
-    const signal = [1, 2, Signal.source(3)];
-    const value = Signal.flattenArray(signal);
+    const cell = [1, 2, Cell.source(3)];
+    const value = Cell.flattenArray(cell);
     expect(value).toEqual([1, 2, 3]);
   });
 
   test('Flattening should work on objects', () => {
-    const signal = { a: 1, b: Signal.source(2) };
-    const value = Signal.flattenObject(signal);
+    const cell = { a: 1, b: Cell.source(2) };
+    const value = Cell.flattenObject(cell);
     expect(value).toEqual({ a: 1, b: 2 });
   });
 });
 
-describe('Signal.async', () => {
+describe('Cell.async', () => {
   test('Should work with a simple function', () => {
-    const { data, run } = Signal.async(async () => await 1);
+    const { data, run } = Cell.async(async () => await 1);
     run().then(() => {
       expect(data.value).toBe(1);
     });
@@ -472,7 +470,7 @@ describe('Signal.async', () => {
       throw new Error('Something went wrong!');
     };
 
-    const { data, error, run } = Signal.async(getter);
+    const { data, error, run } = Cell.async(getter);
     run().then(() => {
       expect(data.value).toBe(null);
       expect(error.value).toHaveProperty('message', 'Something went wrong!');
@@ -485,7 +483,7 @@ describe('Signal.async', () => {
       return true;
     };
 
-    const { data, run, pending } = Signal.async(getter);
+    const { data, run, pending } = Cell.async(getter);
     run();
     expect(data.value).toBe(null);
     expect(pending.value).toBe(true);

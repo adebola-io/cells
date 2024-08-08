@@ -1,3 +1,4 @@
 {
-  "cSpell.words": ["wvalue"]
+  "cSpell.words": ["wvalue"],
+  "deno.enable": false
 }
