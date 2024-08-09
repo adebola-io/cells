@@ -1,36 +1,36 @@
 /**
  * @template T
  */
-export class Signal<T> {
+export class Cell<T> {
     /**
-     * Adds a global effect that runs before any Signal is updated.
+     * Adds a global effect that runs before any Cell is updated.
      * @param {(value: unknown) => void} effect - The effect function.
      * @param {Partial<import('./root.js').GlobalEffectOptions>} [options] - The options for the effect.
      * @example
      * ```
-     * import { Signal } from '@adbl/signals';
+     * import { Cell } from '@adbl/cells';
      *
-     * const signal = Signal.source(0);
-     * Signal.beforeUpdate((value) => console.log(value));
+     * const cell = Cell.source(0);
+     * Cell.beforeUpdate((value) => console.log(value));
      *
-     * signal.value = 1; // prints 1
-     * signal.value = 2; // prints 2
+     * cell.value = 1; // prints 1
+     * cell.value = 2; // prints 2
      * ```
      */
     static beforeUpdate: (effect: (value: unknown) => void, options?: Partial<import("./root.js").GlobalEffectOptions> | undefined) => void;
     /**
-     * Adds a global post-update effect to the Signal system.
+     * Adds a global post-update effect to the Cell system.
      * @param {(value: unknown) => void} effect - The effect function to add.
      * @param {Partial<import('./root.js').GlobalEffectOptions>} [options] - Options for the effect.
      * @example
      * ```
-     * import { Signal } from '@adbl/signals';
+     * import { Cell } from '@adbl/cells';
      *
      * const effect = (value) => console.log(value);
-     * Signal.afterUpdate(effect);
+     * Cell.afterUpdate(effect);
      *
-     * const signal = Signal.source(0);
-     * signal.value = 1; // prints 1
+     * const cell = Cell.source(0);
+     * cell.value = 1; // prints 1
      * ```
      */
     static afterUpdate: (effect: (value: unknown) => void, options?: Partial<import("./root.js").GlobalEffectOptions> | undefined) => void;
@@ -40,97 +40,97 @@ export class Signal<T> {
      * @param {(value: unknown) => void} effect - The effect function added previously.
      * @example
      * ```
-     * import { Signal } from '@adbl/signals';
+     * import { Cell } from '@adbl/cells';
      *
      * const effect = (value) => console.log(value);
-     * Signal.beforeUpdate(effect);
+     * Cell.beforeUpdate(effect);
      *
-     * const signal = Signal.source(0);
-     * signal.value = 1; // prints 1
+     * const cell = Cell.source(0);
+     * cell.value = 1; // prints 1
      *
-     * Signal.removeGlobalEffect(effect);
+     * Cell.removeGlobalEffect(effect);
      *
-     * signal.value = 2; // prints nothing
+     * cell.value = 2; // prints nothing
      * ```
      */
     static removeGlobalEffect: (effect: (value: unknown) => void) => void;
     /**
      * @template T
-     * Creates a new Signal instance with the provided value.
-     * @param {T} value - The value to be stored in the Signal.
-     * @returns {SourceSignal<T>} A new Signal instance.
+     * Creates a new Cell instance with the provided value.
+     * @param {T} value - The value to be stored in the Cell.
+     * @returns {SourceCell<T>} A new Cell instance.
      * ```
-     * import { Signal } from '@adbl/signals';
+     * import { Cell } from '@adbl/cells';
      *
-     * const signal = Signal.source('Hello world');
-     * console.log(signal.value); // Hello world.
+     * const cell = Cell.source('Hello world');
+     * console.log(cell.value); // Hello world.
      *
-     * signal.value = 'Greetings!';
-     * console.log(signal.value) // Greetings!
+     * cell.value = 'Greetings!';
+     * console.log(cell.value) // Greetings!
      * ```
      */
-    static source: <T_1>(value: T_1) => SourceSignal<T_1>;
+    static source: <T_1>(value: T_1) => SourceCell<T_1>;
     /**
      * @template T
      * Creates a new Derived instance with the provided callback function.
      * @param {() => T} callback - The callback function to be used by the Derived instance.
-     * @returns {DerivedSignal<T>} A new Derived instance.
+     * @returns {DerivedCell<T>} A new Derived instance.
      * ```
-     * import { Signal } from '@adbl/signals';
+     * import { Cell } from '@adbl/cells';
      *
-     * const signal = Signal.source(2);
-     * const derived = Signal.derived(() => signal.value * 2);
+     * const cell = Cell.source(2);
+     * const derived = Cell.derived(() => cell.value * 2);
      *
      * console.log(derived.value); // 4
      *
-     * signal.value = 3;
+     * cell.value = 3;
      * console.log(derived.value); // 6
      * ```
      */
-    static derived: <T_2>(callback: () => T_2) => DerivedSignal<T_2>;
+    static derived: <T_2>(callback: () => T_2) => DerivedCell<T_2>;
     /**
      * Batches all the effects created to run only once.
      * @param {() => void} callback - The function to be executed in a batched manner.
      */
     static batch: (callback: () => void) => void;
     /**
-     * Checks if the provided value is an instance of the Signal class.
+     * Checks if the provided value is an instance of the Cell class.
      * @param {any} value - The value to check.
-     * @returns {value is Signal<any>} True if the value is an instance of Signal, false otherwise.
+     * @returns {value is Cell<any>} True if the value is an instance of Cell, false otherwise.
      */
-    static isSignal: (value: any) => value is Signal<any>;
+    static isCell: (value: any) => value is Cell<any>;
     /**
      * @template T
-     * Flattens the provided value by returning the value if it is not a Signal instance, or the value of the Signal instance if it is.
-     * @param {T | Signal<T>} value - The value to be flattened.
+     * Flattens the provided value by returning the value if it is not a Cell instance, or the value of the Cell instance if it is.
+     * @param {T | Cell<T>} value - The value to be flattened.
      * @returns {T} The flattened value.
      */
-    static flatten: <T_3>(value: T_3 | Signal<T_3>) => T_3;
+    static flatten: <T_3>(value: T_3 | Cell<T_3>) => T_3;
     /**
      * Flattens an array by applying the `flatten` function to each element.
      * @template T
-     * @param {Array<T | Signal<T>>} array - The array to be flattened.
+     * @param {Array<T | Cell<T>>} array - The array to be flattened.
      * @returns {Array<T>} A new array with the flattened elements.
      */
-    static flattenArray: <T_4>(array: (T_4 | Signal<T_4>)[]) => T_4[];
+    static flattenArray: <T_4>(array: (T_4 | Cell<T_4>)[]) => T_4[];
     /**
      * Flattens an object by applying the `flatten` function to each value.
      * @template {object} T
      * @param {T} object - The object to be flattened.
-     * @returns {{ [K in keyof T]: T[K] extends Signal<infer U> ? U : T[K] }} A new object with the flattened values.
+     * @returns {{ [K in keyof T]: T[K] extends Cell<infer U> ? U : T[K] }} A new object with the flattened values.
      */
-    static flattenObject: <T_5 extends object>(object: T_5) => { [K in keyof T_5]: T_5[K] extends Signal<infer U> ? U : T_5[K]; };
+    static flattenObject: <T_5 extends object>(object: T_5) => { [K in keyof T_5]: T_5[K] extends Cell<infer U> ? U : T_5[K]; };
     /**
      * Wraps an asynchronous function with managed state.
      *
      * @template X - The type of the input parameter for the getter function.
      * @template Y - The type of the output returned by the getter function.
      * @param {(input: X) => Promise<Y>} getter - A function that performs the asynchronous operation.
-     * @returns {AsyncRequestAtoms<X, Y>} An object containing signals for pending, data, and error states,
+     * @returns {AsyncRequestAtoms<X, Y>} An object containing cells for pending, data, and error states,
      *          as well as functions to run and reload the operation.
      *
      * @example
-     * const { pending, data, error, run, reload } = Signal.async(async (input) => {
+     * const { pending, data, error, run, reload } = Cell.async(async (input) => {
      *   const response = await fetch(`https://example.com/api/data?input=${input}`);
      *   return response.json();
      * });
@@ -138,6 +138,22 @@ export class Signal<T> {
      * run('input');
      */
     static async<X, Y>(getter: (input: X) => Promise<Y>): AsyncRequestAtoms<X, Y>;
+    /**
+     * @type {Array<({
+     *  effect: (newValue: T) => void,
+     *  options?: EffectOptions,
+     * })>}
+     * @protected
+     */
+    protected effects: Array<({
+        effect: (newValue: T) => void;
+        options?: EffectOptions;
+    })>;
+    /**
+     * @type {Array<WeakRef<DerivedCell<any>>>}
+     * @protected
+     */
+    protected derivedCells: Array<WeakRef<DerivedCell<any>>>;
     /**
      * @protected @type T
      */
@@ -148,47 +164,52 @@ export class Signal<T> {
      */
     protected setValue(value: T): void;
     /**
-     * Overrides `Object.prototype.valueOf()` to return the value stored in the Signal.
-     * @returns {T} The value of the Signal.
+     * Overrides `Object.prototype.valueOf()` to return the value stored in the Cell.
+     * @returns {T} The value of the Cell.
      */
     valueOf(): T;
     /**
-     * The value stored in the Signal.
+     * The value stored in the Cell.
      * @protected @type {T}
      */
     protected get revalued(): T;
     /**
-     * Subscribes the provided effect function to the root's watcher list.
-     * If the current instance does not have a watcher list, a new one is created.
-     * Returns a function that can be used to unsubscribe the effect.
-     *
-     * @param {(newValue: T) => void} effect - The effect function to subscribe.
-     * @returns {() => void} - A function that can be used to unsubscribe the effect.
+     * Sets a callback function that will be called whenever the value of the Cell changes.
+     * @param {(newValue: T) => void} callback - The function to be called when the value changes.
      */
-    createEffect(effect: (newValue: T) => void): () => void;
+    set onchange(callback: (newValue: T) => void);
     /**
-     * Subscribes the provided effect function to the root's watcher list and immediately runs the effect with the current value.
-     * If the current instance does not have a watcher list, a new one is created.
-     * Returns a function that can be used to unsubscribe the effect.
-     *
-     * @param {(newValue: T) => void} effect - The effect function to subscribe and immediately run.
-     * @returns {() => void} - A function that can be used to unsubscribe the effect.
+     * Adds the provided effect callback to the list of effects for this cell, and returns a function that can be called to remove the effect.
+     * @param {(newValue: T) => void} callback - The effect callback to add.
+     * @param {EffectOptions} [options] - The options for the effect.
+     * @returns {() => void} A function that can be called to remove the effect.
      */
-    createImmediateEffect(effect: (newValue: T) => void): () => void;
+    listen(callback: (newValue: T) => void, options?: EffectOptions | undefined): () => void;
     /**
-     * Unsubscribes the provided effect from the root watcher list.
-     *
-     * @param {(newValue: T) => void} effect - The effect function to unsubscribe.
+     * Creates an effect that is immediately executed with the current value of the cell, and then added to the list of effects for the cell.
+     * @param {(newValue: T) => void} effect - The effect callback to add.
+     * @returns {() => void} A function that can be called to remove the effect.
      */
-    removeEffect(effect: (newValue: T) => void): void;
+    runAndListen(effect: (newValue: T) => void): () => void;
+    /**
+     * Removes the specified effect callback from the list of effects for this cell.
+     * @param {(newValue: T) => void} callback - The effect callback to remove.
+     */
+    ignore(callback: (newValue: T) => void): void;
+    /**
+     * Checks if the cell is listening to a watcher with the specified name.
+     * @param {string} name - The name of the watcher to check for.
+     * @returns {boolean} `true` if the cell is listening to a watcher with the specified name, `false` otherwise.
+     */
+    isListeningTo(name: string): boolean;
     /**
      * Updates the root object and notifies any registered watchers and computed dependents.
      * This method is called whenever the root object's value changes.
      */
     update(): void;
     /**
-     * Returns the current value of the signal without registering a watcher.
-     * @returns {T} - The current value of the signal.
+     * Returns the current value of the cell without registering a watcher.
+     * @returns {T} - The current value of the cell.
      */
     peek(): T;
 }
@@ -196,65 +217,90 @@ export class Signal<T> {
  * A class that represents a computed value that depends on other reactive values.
  * The computed value is automatically updated when any of its dependencies change.
  * @template T
- * @extends {Signal<T>}
+ * @extends {Cell<T>}
  */
-export class DerivedSignal<T> extends Signal<T> {
+export class DerivedCell<T> extends Cell<T> {
     /**
      * @param {() => T} computedFn - A function that generates the value of the computed.
      */
     constructor(computedFn: () => T);
     /**
+     * @type {() => T}
+     * @protected
+     */
+    protected computedFn: () => T;
+    /**
      * @readonly
      */
-    readonly set value(value: T);
+    readonly set value(_: T);
     /**
      * @readonly
      */
     readonly get value(): T;
-    #private;
 }
 /**
  * @template T
- * @extends {Signal<T>}
+ * @extends {Cell<T>}
  */
-export class SourceSignal<T> extends Signal<T> {
+export class SourceCell<T> extends Cell<T> {
     /**
-     * Creates a new Signal with the provided value.
+     * Creates a new Cell with the provided value.
      * @param {T} value
      */
     constructor(value: T);
     /**
-     * Sets the value stored in the Signal and triggers an update.
+     * Sets the value stored in the Cell and triggers an update.
      * @param {T} value
      */
     set value(value: T);
     get value(): T;
     /**
+     * Proxies the provided value deeply, allowing it to be observed and updated.
+     * @template T
+     * @param {T} value - The value to be proxied.
+     * @returns {T} - The proxied value.
      * @private
-     * @param {T} value
-     * @returns {T}
      */
-    private proxify;
+    private proxy;
 }
 export type AsyncRequestAtoms<Input, Output> = {
     /**
      * Represents the loading state of an asynchronous request.
      */
-    pending: SourceSignal<boolean>;
+    pending: SourceCell<boolean>;
     /**
      * Represents the data returned by the asynchronous request.
      */
-    data: SourceSignal<Output | null>;
+    data: SourceCell<Output | null>;
     /**
      * Represents the errors returned by the asynchronous request, if any.
      */
-    error: SourceSignal<unknown | null>;
+    error: SourceCell<Error | null>;
     /**
      * Triggers the asynchronous request.
      */
-    run: Input extends undefined ? () => Promise<void> : (input: Input) => Promise<void>;
+    run: NeverIfAny<Input> extends never ? (input?: Input) => Promise<void> : (input: Input) => Promise<void>;
     /**
      * Triggers the asynchronous request again with an optional new input and optionally changes the loading state.
      */
     reload: (newInput?: Input, changeLoadingState?: boolean) => Promise<void>;
 };
+export type EffectOptions = {
+    /**
+     * - Whether the effect should be removed after the first run.
+     */
+    once?: boolean | undefined;
+    /**
+     * - An AbortSignal to be used to ignore the effect if it is aborted.
+     */
+    signal?: AbortSignal | undefined;
+    /**
+     * - The name of the effect for debugging purposes.
+     */
+    name?: string | undefined;
+    /**
+     * - The priority of the effect. Higher priority effects are executed first. The default priority is 0.
+     */
+    priority?: number | undefined;
+};
+export type NeverIfAny<T> = 0 extends (1 & T) ? never : T;

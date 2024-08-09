@@ -18,6 +18,14 @@
  */
 
 /**
+ * @typedef {object} EffectOptions
+ * @property {boolean} [once] - Whether the effect should be removed after the first run.
+ * @property {AbortSignal} [signal] - An AbortSignal to be used to ignore the effect if it is aborted.
+ * @property {string} [name] - The name of the effect for debugging purposes.
+ * @property {number} [priority] - The priority of the effect. Higher priority effects are executed first. The default priority is 0.
+ */
+
+/**
  * @template T
  * @typedef {0 extends (1 & T) ? never : T} NeverIfAny
  */
@@ -29,13 +37,17 @@ import { activeComputedValues, root } from './root.js';
  */
 export class Cell {
   /**
-   * @type {Array<((newValue: T) => void)>}
+   * @type {Array<({
+   *  effect: (newValue: T) => void,
+   *  options?: EffectOptions,
+   * })>}
    * @protected
    */
   effects = [];
 
   /**
    * @type {Array<WeakRef<DerivedCell<any>>>}
+   * @protected
    */
   derivedCells = [];
 
@@ -84,17 +96,44 @@ export class Cell {
    * @param {(newValue: T) => void} callback - The function to be called when the value changes.
    */
   set onchange(callback) {
-    this.subscribe(callback);
+    this.listen(callback);
   }
 
   /**
    * Adds the provided effect callback to the list of effects for this cell, and returns a function that can be called to remove the effect.
-   * @param {(newValue: T) => void} effect - The effect callback to add.
+   * @param {(newValue: T) => void} callback - The effect callback to add.
+   * @param {EffectOptions} [options] - The options for the effect.
    * @returns {() => void} A function that can be called to remove the effect.
    */
-  subscribe(effect) {
-    this.effects.push(effect);
-    return () => this.unsubscribe(effect);
+  listen(callback, options) {
+    let effect = callback;
+    if (options?.signal?.aborted) {
+      return () => {};
+    }
+
+    options?.signal?.addEventListener('abort', () => {
+      this.ignore(effect);
+    });
+
+    if (options?.once) {
+      effect = () => {
+        callback(this.wvalue);
+        this.ignore(effect);
+      };
+    }
+
+    this.effects.push({ effect, options });
+
+    this.effects.sort((a, b) => {
+      const aPriority = a.options?.priority ?? 0;
+      const bPriority = b.options?.priority ?? 0;
+      if (aPriority === bPriority) {
+        return 0;
+      }
+      return aPriority < bPriority ? 1 : -1;
+    });
+
+    return () => this.ignore(effect);
   }
 
   /**
@@ -102,20 +141,29 @@ export class Cell {
    * @param {(newValue: T) => void} effect - The effect callback to add.
    * @returns {() => void} A function that can be called to remove the effect.
    */
-  runAndSubscribe(effect) {
+  runAndListen(effect) {
     effect(this.wvalue);
-    return this.subscribe(effect);
+    return this.listen(effect);
   }
 
   /**
    * Removes the specified effect callback from the list of effects for this cell.
-   * @param {(newValue: T) => void} effect - The effect callback to remove.
+   * @param {(newValue: T) => void} callback - The effect callback to remove.
    */
-  unsubscribe(effect) {
-    const index = this.effects.indexOf(effect);
+  ignore(callback) {
+    const index = this.effects.findIndex(({ effect }) => effect === callback);
     if (index === -1) return;
 
-    this.effects.splice(this.effects.indexOf(effect), 1);
+    this.effects.splice(index, 1);
+  }
+
+  /**
+   * Checks if the cell is listening to a watcher with the specified name.
+   * @param {string} name - The name of the watcher to check for.
+   * @returns {boolean} `true` if the cell is listening to a watcher with the specified name, `false` otherwise.
+   */
+  isListeningTo(name) {
+    return this.effects.some(({ options }) => options?.name === name);
   }
 
   /**
@@ -124,7 +172,7 @@ export class Cell {
    */
   update() {
     // Run watchers.
-    for (const watcher of this.effects) {
+    for (const { effect: watcher } of this.effects) {
       if (root.batchNestingLevel > 0) {
         root.batchedEffects.set(watcher, [this.wvalue]);
         continue;
@@ -447,7 +495,7 @@ export class DerivedCell extends Cell {
   /**
    * @readonly
    */
-  set value(value) {
+  set value(_) {
     throw new Error('Cannot set a derived Cell value.');
   }
 

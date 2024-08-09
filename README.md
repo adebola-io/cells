@@ -31,9 +31,9 @@ const count = Cell.source(0);
 const doubledCount = Cell.derived(() => count.value * 2);
 
 // Subscribe to changes in the derived cell.
-doubledCount.onchange = (value) => {
+doubledCount.listen((value) => {
   console.log(`Doubled count: ${value}`);
-};
+});
 
 // Update the original cell.
 count.value = 1; // Logs: "Doubled count: 2"

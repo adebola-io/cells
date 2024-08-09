@@ -14,7 +14,7 @@ describe('Cells', () => {
   test('Cell should be reactive', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
-    cell.subscribe(callback);
+    cell.listen(callback);
     cell.value = 2;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(2);
@@ -23,7 +23,7 @@ describe('Cells', () => {
   test('Cell should handle built-in operators', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
-    const unsubscribe = cell.subscribe(callback);
+    const unsubscribe = cell.listen(callback);
     cell.value += 2;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(3);
@@ -36,8 +36,8 @@ describe('Effects', () => {
     const cell = Cell.source(1);
     const callback1 = vi.fn();
     const callback2 = vi.fn();
-    const unsubscribe1 = cell.subscribe(callback1);
-    const unsubscribe2 = cell.subscribe(callback2);
+    const unsubscribe1 = cell.listen(callback1);
+    const unsubscribe2 = cell.listen(callback2);
     cell.value = 2;
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback1).toHaveBeenCalledWith(2);
@@ -54,7 +54,7 @@ describe('Effects', () => {
   test('Cell should handle unsubscribe', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
-    const unsubscribe = cell.subscribe(callback);
+    const unsubscribe = cell.listen(callback);
     cell.value = 2;
     expect(callback).toHaveBeenCalledTimes(1);
     unsubscribe();
@@ -67,9 +67,9 @@ describe('Effects', () => {
     const callback1 = vi.fn();
     const callback2 = vi.fn();
     const callback3 = vi.fn();
-    const unsubscribe1 = cell.subscribe(callback1);
-    const unsubscribe2 = cell.subscribe(callback2);
-    const unsubscribe3 = cell.subscribe(callback3);
+    const unsubscribe1 = cell.listen(callback1);
+    const unsubscribe2 = cell.listen(callback2);
+    const unsubscribe3 = cell.listen(callback3);
     cell.value = 2;
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(1);
@@ -182,7 +182,7 @@ describe('Derived cells', () => {
     const cell2 = Cell.source(2);
     const derived = Cell.derived(() => cell1.value + cell2.value);
     const callback = vi.fn();
-    derived.subscribe(callback);
+    derived.listen(callback);
     cell1.value = 3;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(5);
@@ -202,7 +202,7 @@ describe('Derived cells', () => {
     const cell3 = Cell.source(3);
     const derived = Cell.derived(() => cell1.value + cell2.value + cell3.value);
     const callback = vi.fn();
-    derived.subscribe(callback);
+    derived.listen(callback);
     cell1.value = 4;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(9);
@@ -217,7 +217,7 @@ describe('Derived cells', () => {
   test('Derived cells should not depend on same cell multiple times', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
-    cell.subscribe(callback);
+    cell.listen(callback);
 
     const derived1 = Cell.derived(() => cell.value + cell.value);
     expect(derived1.value).toBe(2);
@@ -232,7 +232,7 @@ describe('Derived cells', () => {
     const derived1 = Cell.derived(() => cell1.value + cell2.value);
     const derived2 = Cell.derived(() => derived1.value * 2);
     const callback = vi.fn();
-    derived2.subscribe(callback);
+    derived2.listen(callback);
     cell1.value = 3;
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(10);
@@ -252,7 +252,7 @@ describe('Derived cells', () => {
     expect(derived2.value).toBe(6);
 
     const callback = vi.fn();
-    derived2.subscribe(callback);
+    derived2.listen(callback);
 
     cell1.value = 3;
 
@@ -267,9 +267,9 @@ describe('Derived cells', () => {
     const callback1 = vi.fn();
     const callback2 = vi.fn();
     const callback3 = vi.fn();
-    const unsubscribe1 = derived.subscribe(callback1);
-    const unsubscribe2 = derived.subscribe(callback2);
-    const unsubscribe3 = derived.subscribe(callback3);
+    const unsubscribe1 = derived.listen(callback1);
+    const unsubscribe2 = derived.listen(callback2);
+    const unsubscribe3 = derived.listen(callback3);
     cell1.value = 3;
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(1);
@@ -366,7 +366,7 @@ describe('Batched effects', () => {
     const callback = vi.fn();
 
     const cell = Cell.source(1);
-    cell.subscribe(callback);
+    cell.listen(callback);
 
     Cell.batch(() => {
       cell.value = 2;
@@ -399,7 +399,7 @@ describe('Batched effects', () => {
   test('Nested batched effects should still only run once', () => {
     const callback = vi.fn();
     const cell = Cell.source(2);
-    cell.subscribe(callback);
+    cell.listen(callback);
 
     Cell.batch(() => {
       cell.value = 100;
@@ -419,7 +419,7 @@ describe('Immediate effects', () => {
   test('Immediate effects should run immediately', () => {
     const callback = vi.fn();
     const cell = Cell.source(1);
-    cell.runAndSubscribe(callback);
+    cell.runAndListen(callback);
     expect(callback).toHaveBeenCalledTimes(1);
   });
 });
@@ -492,5 +492,62 @@ describe('Cell.async', () => {
       expect(data.value).toBe(true);
       expect(pending.value).toBe(false);
     }, 4000);
+  });
+});
+
+describe('Effect options', () => {
+  test('Effects should be ignored if the signal is aborted', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+    cell.listen(callback, { signal });
+    abortController.abort();
+    cell.value = 2;
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  test('Effects should be removed after the first run if once is true', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback, { once: true });
+    cell.value = 2;
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  test('Effects should not be removed after the first run if once is false', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback, { once: false });
+    cell.value = 2;
+    cell.value = 3;
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
+  test('Effects should have a name', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback, { name: 'test' });
+    expect(cell.isListeningTo('test')).toBe(true);
+  });
+
+  test('Effects should execute in order of priority', () => {
+    const cell = Cell.source(1);
+
+    let stream = '';
+    const callback1 = () => {
+      stream += 'World!';
+    };
+
+    const callback2 = () => {
+      stream += 'Hello, ';
+    };
+
+    cell.listen(callback1, { priority: 1 });
+    cell.listen(callback2, { priority: 2 });
+
+    cell.value = 2;
+
+    expect(stream).toBe('Hello, World!');
   });
 });

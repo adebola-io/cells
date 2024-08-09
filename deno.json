@@ -1,6 +1,6 @@
 {
-  "name": "@adbl/signals",
-  "version": "1.0.6",
+  "name": "@adbl/cells",
+  "version": "1.0.0",
   "exports": "./index.js",
   "publish": {
     "exclude": [
