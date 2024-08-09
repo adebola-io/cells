@@ -58,6 +58,7 @@ export class Cell<T> {
      * @template T
      * Creates a new Cell instance with the provided value.
      * @param {T} value - The value to be stored in the Cell.
+     * @param {Partial<CellOptions<T>>} [options] - The options for the cell.
      * @returns {SourceCell<T>} A new Cell instance.
      * ```
      * import { Cell } from '@adbl/cells';
@@ -69,7 +70,7 @@ export class Cell<T> {
      * console.log(cell.value) // Greetings!
      * ```
      */
-    static source: <T_1>(value: T_1) => SourceCell<T_1>;
+    static source: <T_1>(value: T_1, options?: Partial<CellOptions<T_1>> | undefined) => SourceCell<T_1>;
     /**
      * @template T
      * Creates a new Derived instance with the provided callback function.
@@ -246,8 +247,11 @@ export class SourceCell<T> extends Cell<T> {
     /**
      * Creates a new Cell with the provided value.
      * @param {T} value
+     * @param {Partial<CellOptions<T>>} [options]
      */
-    constructor(value: T);
+    constructor(value: T, options?: Partial<CellOptions<T>> | undefined);
+    /** @type {Partial<CellOptions<T>>} */
+    options: Partial<CellOptions<T>>;
     /**
      * Sets the value stored in the Cell and triggers an update.
      * @param {T} value
@@ -287,20 +291,34 @@ export type AsyncRequestAtoms<Input, Output> = {
 };
 export type EffectOptions = {
     /**
-     * - Whether the effect should be removed after the first run.
+     * Whether the effect should be removed after the first run.
      */
     once?: boolean | undefined;
     /**
-     * - An AbortSignal to be used to ignore the effect if it is aborted.
+     * An AbortSignal to be used to ignore the effect if it is aborted.
      */
     signal?: AbortSignal | undefined;
     /**
-     * - The name of the effect for debugging purposes.
+     * The name of the effect for debugging purposes.
      */
     name?: string | undefined;
     /**
-     * - The priority of the effect. Higher priority effects are executed first. The default priority is 0.
+     * The priority of the effect. Higher priority effects are executed first. The default priority is 0.
      */
     priority?: number | undefined;
+};
+export type CellOptions<T> = {
+    /**
+     * Whether the cell should be immutable. If set to true, the cell will not allow updates and will throw an error if the value is changed.
+     */
+    immutable?: boolean | undefined;
+    /**
+     * Whether the cell's value should be shallowly proxied. If set to true, the cell will only proxy the top-level properties of the value, preventing any changes to nested properties. This can be useful for performance optimizations.
+     */
+    shallowProxied?: boolean | undefined;
+    /**
+     * A function that determines whether two values are equal. If not provided, the default equality function will be used.
+     */
+    equals?: ((oldValue: T, newValue: T) => boolean) | undefined;
 };
 export type NeverIfAny<T> = 0 extends (1 & T) ? never : T;

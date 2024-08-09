@@ -19,10 +19,25 @@
 
 /**
  * @typedef {object} EffectOptions
- * @property {boolean} [once] - Whether the effect should be removed after the first run.
- * @property {AbortSignal} [signal] - An AbortSignal to be used to ignore the effect if it is aborted.
- * @property {string} [name] - The name of the effect for debugging purposes.
- * @property {number} [priority] - The priority of the effect. Higher priority effects are executed first. The default priority is 0.
+ * @property {boolean} [once]
+ * Whether the effect should be removed after the first run.
+ * @property {AbortSignal} [signal]
+ * An AbortSignal to be used to ignore the effect if it is aborted.
+ * @property {string} [name]
+ * The name of the effect for debugging purposes.
+ * @property {number} [priority]
+ * The priority of the effect. Higher priority effects are executed first. The default priority is 0.
+ */
+
+/**
+ * @template T
+ * @typedef {object} CellOptions
+ * @property {boolean} [immutable]
+ * Whether the cell should be immutable. If set to true, the cell will not allow updates and will throw an error if the value is changed.
+ * @property {boolean} [shallowProxied]
+ * Whether the cell's value should be shallowly proxied. If set to true, the cell will only proxy the top-level properties of the value, preventing any changes to nested properties. This can be useful for performance optimizations.
+ * @property {(oldValue: T, newValue: T) => boolean} [equals]
+ * A function that determines whether two values are equal. If not provided, the default equality function will be used.
  */
 
 /**
@@ -288,6 +303,7 @@ export class Cell {
    * @template T
    * Creates a new Cell instance with the provided value.
    * @param {T} value - The value to be stored in the Cell.
+   * @param {Partial<CellOptions<T>>} [options] - The options for the cell.
    * @returns {SourceCell<T>} A new Cell instance.
    * ```
    * import { Cell } from '@adbl/cells';
@@ -299,7 +315,7 @@ export class Cell {
    * console.log(cell.value) // Greetings!
    * ```
    */
-  static source = (value) => new SourceCell(value);
+  static source = (value, options) => new SourceCell(value, options);
 
   /**
    * @template T
@@ -525,13 +541,19 @@ export class DerivedCell extends Cell {
  * @extends {Cell<T>}
  */
 export class SourceCell extends Cell {
+  /** @type {Partial<CellOptions<T>>} */
+  options;
+
   /**
    * Creates a new Cell with the provided value.
    * @param {T} value
+   * @param {Partial<CellOptions<T>>} [options]
    */
-  constructor(value) {
+  constructor(value, options) {
     super();
-    this.setValue(this.proxy(value));
+
+    this.setValue(options?.shallowProxied ? value : this.proxy(value));
+    this.options = options ?? {};
   }
 
   get value() {
@@ -543,26 +565,30 @@ export class SourceCell extends Cell {
    * @param {T} value
    */
   set value(value) {
-    const oldValue = this.wvalue;
-
-    // global effects
-    if (value !== this.wvalue)
-      for (const [options, effect] of root.globalPreEffects) {
-        effect(this.wvalue);
-
-        if (options.runOnce) {
-          root.globalPreEffects = root.globalPreEffects.filter(
-            ([_, e]) => e !== effect
-          );
-        }
-      }
-
-    this.setValue(value);
-
-    if (oldValue === this.wvalue) {
-      return;
+    if (this.options.immutable) {
+      throw new Error('Cannot set the value of an immutable cell.');
     }
 
+    const oldValue = this.wvalue;
+
+    const isEqual = this.options.equals
+      ? this.options.equals(oldValue, value)
+      : oldValue === value;
+
+    if (isEqual) return;
+
+    // global effects
+    for (const [options, effect] of root.globalPreEffects) {
+      effect(this.wvalue);
+
+      if (options.runOnce) {
+        root.globalPreEffects = root.globalPreEffects.filter(
+          ([_, e]) => e !== effect
+        );
+      }
+    }
+
+    this.setValue(value);
     this.update();
   }
 

@@ -551,3 +551,44 @@ describe('Effect options', () => {
     expect(stream).toBe('Hello, World!');
   });
 });
+
+describe('Cell options', () => {
+  test('Cells should be deeply proxied by default', () => {
+    const cell = Cell.source({ a: 1 });
+    const callback = vi.fn();
+    cell.listen(callback);
+    cell.value.a = 2;
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  test('Cells should be shallowly proxied if specified', () => {
+    const cell = Cell.source({ a: 1 }, { shallowProxied: true });
+    const callback = vi.fn();
+    cell.listen(callback);
+    cell.value.a = 2;
+    expect(callback).toHaveBeenCalledTimes(0);
+  });
+
+  test('Immutable cells should not allow updates', () => {
+    const cell = Cell.source(1, { immutable: true });
+    expect(() => {
+      cell.value = 2;
+    }).toThrowError('Cannot set the value of an immutable cell.');
+  });
+
+  test('Cells should use custom equality functions', () => {
+    const cell = Cell.source(
+      { a: 1, b: 2 },
+      {
+        equals: (a, b) => a.a === b.a && a.b === b.b,
+      }
+    );
+    const callback = vi.fn();
+    cell.listen(callback);
+    cell.value = { a: 1, b: 2 };
+    expect(callback).toHaveBeenCalledTimes(0);
+
+    cell.value = { a: 1, b: 3 };
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+});
