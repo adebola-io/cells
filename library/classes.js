@@ -122,6 +122,7 @@ export class Cell {
    */
   listen(callback, options) {
     let effect = callback;
+
     if (options?.signal?.aborted) {
       return () => {};
     }
@@ -135,6 +136,18 @@ export class Cell {
         callback(this.wvalue);
         this.ignore(effect);
       };
+    }
+
+    if (options?.name) {
+      if (this.isListeningTo(options.name)) {
+        throw new Error(
+          `An effect with the name "${options.name}" is already listening to this cell.`
+        );
+      }
+    }
+
+    if (this.effects.some(({ effect }) => effect === callback)) {
+      throw new Error('This effect is already listening to this cell.');
     }
 
     this.effects.push({ effect, options });
@@ -179,6 +192,19 @@ export class Cell {
    */
   isListeningTo(name) {
     return this.effects.some(({ options }) => options?.name === name);
+  }
+
+  /**
+   * Removes the watcher with the specified name from the list of effects for this cell.
+   * @param {string} name - The name of the watcher to stop listening to.
+   */
+  stopListeningTo(name) {
+    const effectIndex = this.effects.findIndex(
+      ({ options }) => options?.name === name
+    );
+    if (effectIndex === -1) return;
+
+    this.effects.splice(effectIndex, 1);
   }
 
   /**

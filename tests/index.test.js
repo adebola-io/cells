@@ -550,6 +550,35 @@ describe('Effect options', () => {
 
     expect(stream).toBe('Hello, World!');
   });
+
+  test('Effects should throw an error if they are already listening to the cell', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback);
+    expect(() => {
+      cell.listen(callback);
+    }).toThrowError('This effect is already listening to this cell.');
+  });
+
+  test('Effects should throw an error if they are already listening to the cell with the same name', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback, { name: 'test' });
+    expect(() => {
+      cell.listen(callback, { name: 'test' });
+    }).toThrowError(
+      'An effect with the name "test" is already listening to this cell.'
+    );
+  });
+
+  test('Effects should be able to be stopped', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback, { name: 'test' });
+    cell.stopListeningTo('test');
+    cell.value = 2;
+    expect(callback).not.toHaveBeenCalled();
+  });
 });
 
 describe('Cell options', () => {
