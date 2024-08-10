@@ -7,9 +7,9 @@ export namespace root {
 /**
  * A value representing the computed values that are currently being calculated.
  * It is an array so it can keep track of nested computed values.
- * @type {DerivedCell[]}
+ * @type {[DerivedCell, () => any][]}
  */
-export const activeComputedValues: import("./classes.js").DerivedCell<any>[];
+export const activeComputedValues: [import("./classes.js").DerivedCell<any>, () => any][];
 export type Watchable = import('./classes.js').Cell<any>;
 export type DerivedCell = import('./classes.js').DerivedCell<any>;
 export type GlobalEffectOptions = {

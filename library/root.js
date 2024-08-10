@@ -39,6 +39,6 @@ export const root = {
 /**
  * A value representing the computed values that are currently being calculated.
  * It is an array so it can keep track of nested computed values.
- * @type {DerivedCell[]}
+ * @type {[DerivedCell, () => any][]}
  */
 export const activeComputedValues = [];

@@ -422,6 +422,26 @@ describe('Immediate effects', () => {
     cell.runAndListen(callback);
     expect(callback).toHaveBeenCalledTimes(1);
   });
+
+  test('Immediate effects with once set to true should only run once', () => {
+    const callback = vi.fn();
+    const cell = Cell.source(1);
+    cell.runAndListen(callback, { once: true });
+    cell.value = 2;
+    cell.value = 3;
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  test('Immediate effects with signals should be aborted', () => {
+    const callback = vi.fn();
+    const cell = Cell.source(1);
+    const abortController = new AbortController();
+    const signal = abortController.signal;
+    cell.runAndListen(callback, { signal });
+    abortController.abort();
+    cell.value = 2; // This should not trigger the callback
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('Flattening', () => {
@@ -551,15 +571,6 @@ describe('Effect options', () => {
     expect(stream).toBe('Hello, World!');
   });
 
-  test('Effects should throw an error if they are already listening to the cell', () => {
-    const cell = Cell.source(1);
-    const callback = vi.fn();
-    cell.listen(callback);
-    expect(() => {
-      cell.listen(callback);
-    }).toThrowError('This effect is already listening to this cell.');
-  });
-
   test('Effects should throw an error if they are already listening to the cell with the same name', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
@@ -578,6 +589,14 @@ describe('Effect options', () => {
     cell.stopListeningTo('test');
     cell.value = 2;
     expect(callback).not.toHaveBeenCalled();
+  });
+
+  test('Effects should be weakly referenced if specified', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback, { weak: true });
+    cell.value = 2;
+    expect(callback).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -96,31 +96,33 @@ export class Cell<T> {
     static batch: (callback: () => void) => void;
     /**
      * Checks if the provided value is an instance of the Cell class.
-     * @param {any} value - The value to check.
-     * @returns {value is Cell<any>} True if the value is an instance of Cell, false otherwise.
+     * @template [T=any]
+     * @template [U=any]
+     * @param {Cell<T> | U} value - The value to check.
+     * @returns {value is Cell<T>} True if the value is an instance of Cell, false otherwise.
      */
-    static isCell: (value: any) => value is Cell<any>;
+    static isCell: <T_3 = any, U = any>(value: U | Cell<T_3>) => value is Cell<T_3>;
     /**
      * @template T
      * Flattens the provided value by returning the value if it is not a Cell instance, or the value of the Cell instance if it is.
      * @param {T | Cell<T>} value - The value to be flattened.
      * @returns {T} The flattened value.
      */
-    static flatten: <T_3>(value: T_3 | Cell<T_3>) => T_3;
+    static flatten: <T_4>(value: T_4 | Cell<T_4>) => T_4;
     /**
      * Flattens an array by applying the `flatten` function to each element.
      * @template T
      * @param {Array<T | Cell<T>>} array - The array to be flattened.
      * @returns {Array<T>} A new array with the flattened elements.
      */
-    static flattenArray: <T_4>(array: (T_4 | Cell<T_4>)[]) => T_4[];
+    static flattenArray: <T_5>(array: (T_5 | Cell<T_5>)[]) => T_5[];
     /**
      * Flattens an object by applying the `flatten` function to each value.
      * @template {object} T
      * @param {T} object - The object to be flattened.
      * @returns {{ [K in keyof T]: T[K] extends Cell<infer U> ? U : T[K] }} A new object with the flattened values.
      */
-    static flattenObject: <T_5 extends object>(object: T_5) => { [K in keyof T_5]: T_5[K] extends Cell<infer U> ? U : T_5[K]; };
+    static flattenObject: <T_6 extends object>(object: T_6) => { [K in keyof T_6]: T_6[K] extends Cell<infer U_1> ? U_1 : T_6[K]; };
     /**
      * Wraps an asynchronous function with managed state.
      *
@@ -140,21 +142,24 @@ export class Cell<T> {
      */
     static async<X, Y>(getter: (input: X) => Promise<Y>): AsyncRequestAtoms<X, Y>;
     /**
-     * @type {Array<({
-     *  effect: (newValue: T) => void,
-     *  options?: EffectOptions,
-     * })>}
+     * @type {Array<Effect<T>>}
      * @protected
      */
-    protected effects: Array<({
-        effect: (newValue: T) => void;
-        options?: EffectOptions;
-    })>;
+    protected __effects: Array<Effect<T>>;
     /**
-     * @type {Array<WeakRef<DerivedCell<any>>>}
+     * @type {Array<WeakRef<[DerivedCell<any>, () => any]>>}
      * @protected
      */
-    protected derivedCells: Array<WeakRef<DerivedCell<any>>>;
+    protected __derivedCells: Array<WeakRef<[DerivedCell<any>, () => any]>>;
+    /**
+     * @readonly
+     */
+    readonly get effects(): Effect<T>[];
+    /**
+     * @readonly
+     * @returns {Array<DerivedCell<any>>}
+     */
+    readonly get derivedCells(): DerivedCell<any>[];
     /**
      * @protected @type T
      */
@@ -169,6 +174,12 @@ export class Cell<T> {
      * @returns {T} The value of the Cell.
      */
     valueOf(): T;
+    get value(): T;
+    /**
+     * Stringifies the value of the Cell.
+     * @returns {string}
+     */
+    toString(): string;
     /**
      * The value stored in the Cell.
      * @protected @type {T}
@@ -188,10 +199,11 @@ export class Cell<T> {
     listen(callback: (newValue: T) => void, options?: EffectOptions | undefined): () => void;
     /**
      * Creates an effect that is immediately executed with the current value of the cell, and then added to the list of effects for the cell.
-     * @param {(newValue: T) => void} effect - The effect callback to add.
+     * @param {(newValue: T) => void} callback - The effect callback to add.
+     * @param {Partial<EffectOptions>} [options] - The options for the effect.
      * @returns {() => void} A function that can be called to remove the effect.
      */
-    runAndListen(effect: (newValue: T) => void): () => void;
+    runAndListen(callback: (newValue: T) => void, options?: Partial<EffectOptions> | undefined): () => void;
     /**
      * Removes the specified effect callback from the list of effects for this cell.
      * @param {(newValue: T) => void} callback - The effect callback to remove.
@@ -203,6 +215,11 @@ export class Cell<T> {
      * @returns {boolean} `true` if the cell is listening to a watcher with the specified name, `false` otherwise.
      */
     isListeningTo(name: string): boolean;
+    /**
+     * Removes the watcher with the specified name from the list of effects for this cell.
+     * @param {string} name - The name of the watcher to stop listening to.
+     */
+    stopListeningTo(name: string): void;
     /**
      * Updates the root object and notifies any registered watchers and computed dependents.
      * This method is called whenever the root object's value changes.
@@ -225,11 +242,6 @@ export class DerivedCell<T> extends Cell<T> {
      * @param {() => T} computedFn - A function that generates the value of the computed.
      */
     constructor(computedFn: () => T);
-    /**
-     * @type {() => T}
-     * @protected
-     */
-    protected computedFn: () => T;
     /**
      * @readonly
      */
@@ -303,6 +315,10 @@ export type EffectOptions = {
      */
     name?: string | undefined;
     /**
+     * Whether the effect should be weakly referenced. This means that the effect will be garbage collected if there are no other references to it.
+     */
+    weak?: boolean | undefined;
+    /**
      * The priority of the effect. Higher priority effects are executed first. The default priority is 0.
      */
     priority?: number | undefined;
@@ -322,3 +338,31 @@ export type CellOptions<T> = {
     equals?: ((oldValue: T, newValue: T) => boolean) | undefined;
 };
 export type NeverIfAny<T> = 0 extends (1 & T) ? never : T;
+export type Reference<T> = {
+    deref: () => T | undefined;
+};
+/**
+ * @template T
+ * @typedef {{
+ *    deref: () => T | undefined
+ * }} Reference
+ */
+/** @template T */
+declare class Effect<T> {
+    /**
+     * @param {(newValue: T) => void} callback
+     * @param {EffectOptions} [options]
+     */
+    constructor(callback: (newValue: T) => void, options?: EffectOptions | undefined);
+    /**
+     * @type {EffectOptions | undefined}
+     */
+    options: EffectOptions | undefined;
+    /**
+     * Returns the callback function, if it still exists.
+     * @returns {((newValue: T) => void) | undefined}
+     */
+    get callback(): ((newValue: T) => void) | undefined;
+    #private;
+}
+export {};

@@ -25,6 +25,8 @@
  * An AbortSignal to be used to ignore the effect if it is aborted.
  * @property {string} [name]
  * The name of the effect for debugging purposes.
+ * @property {boolean} [weak]
+ * Whether the effect should be weakly referenced. This means that the effect will be garbage collected if there are no other references to it.
  * @property {number} [priority]
  * The priority of the effect. Higher priority effects are executed first. The default priority is 0.
  */
@@ -49,22 +51,79 @@ import { activeComputedValues, root } from './root.js';
 
 /**
  * @template T
+ * @typedef {{
+ *    deref: () => T | undefined
+ * }} Reference
+ */
+
+/** @template T */
+class Effect {
+  /**
+   * @type {EffectOptions | undefined}
+   */
+  options;
+
+  /**
+   * @type {WeakRef<(newValue: T) => void> | ((newValue: T) => void) }
+   */
+  #callback;
+
+  /**
+   * @param {(newValue: T) => void} callback
+   * @param {EffectOptions} [options]
+   */
+  constructor(callback, options) {
+    if (options?.weak) {
+      this.#callback = new WeakRef(callback);
+    } else {
+      this.#callback = callback;
+    }
+    this.options = options;
+  }
+
+  /**
+   * Returns the callback function, if it still exists.
+   * @returns {((newValue: T) => void) | undefined}
+   */
+  get callback() {
+    if (this.#callback instanceof WeakRef) {
+      return this.#callback.deref();
+    }
+    return this.#callback;
+  }
+}
+
+/**
+ * @template T
  */
 export class Cell {
   /**
-   * @type {Array<({
-   *  effect: (newValue: T) => void,
-   *  options?: EffectOptions,
-   * })>}
+   * @type {Array<Effect<T>>}
    * @protected
    */
-  effects = [];
+  __effects = [];
 
   /**
-   * @type {Array<WeakRef<DerivedCell<any>>>}
+   * @type {Array<[WeakRef<DerivedCell<any>>, () => any]>}
    * @protected
    */
-  derivedCells = [];
+  __derivedCells = [];
+
+  /**
+   * @readonly
+   */
+  get effects() {
+    return this.__effects;
+  }
+
+  /**
+   * @readonly
+   * @returns {Array<DerivedCell<any>>}
+   */
+  get derivedCells() {
+    // @ts-ignore
+    return this.__derivedCells.map((cell) => cell.deref()).filter(Boolean);
+  }
 
   /**
    * @protected @type T
@@ -84,7 +143,20 @@ export class Cell {
    * @returns {T} The value of the Cell.
    */
   valueOf() {
+    return this.revalued;
+  }
+
+  get value() {
     return this.wvalue;
+  }
+
+  /**
+   * Stringifies the value of the Cell.
+   * @returns {string}
+   */
+  toString() {
+    // @ts-ignore
+    return this.wvalue.toString();
   }
 
   /**
@@ -95,12 +167,15 @@ export class Cell {
     const currentlyComputedValue = activeComputedValues.at(-1);
 
     if (currentlyComputedValue !== undefined) {
-      const isAlreadySubscribed = this.derivedCells.some(
-        (ref) => ref.deref() === currentlyComputedValue
+      const isAlreadySubscribed = this.__derivedCells.some(
+        (ref) => ref[0].deref() === currentlyComputedValue[0]
       );
       if (isAlreadySubscribed) return this.wvalue;
 
-      this.derivedCells.push(new WeakRef(currentlyComputedValue));
+      this.__derivedCells.push([
+        new WeakRef(currentlyComputedValue[0]),
+        currentlyComputedValue[1],
+      ]);
     }
 
     return this.wvalue;
@@ -138,26 +213,25 @@ export class Cell {
       };
     }
 
-    if (options?.name) {
-      if (this.isListeningTo(options.name)) {
-        throw new Error(
-          `An effect with the name "${options.name}" is already listening to this cell.`
-        );
-      }
+    if (options?.name && this.isListeningTo(options.name)) {
+      throw new Error(
+        `An effect with the name "${options.name}" is already listening to this cell.`
+      );
     }
 
-    if (this.effects.some(({ effect }) => effect === callback)) {
-      throw new Error('This effect is already listening to this cell.');
+    const isAlreadySubscribed = this.__effects.some((effect) => {
+      return effect.callback === callback;
+    });
+
+    if (!isAlreadySubscribed) {
+      this.__effects.push(new Effect(callback, options));
     }
 
-    this.effects.push({ effect, options });
-
-    this.effects.sort((a, b) => {
+    this.__effects.sort((a, b) => {
       const aPriority = a.options?.priority ?? 0;
       const bPriority = b.options?.priority ?? 0;
-      if (aPriority === bPriority) {
-        return 0;
-      }
+
+      if (aPriority === bPriority) return 0;
       return aPriority < bPriority ? 1 : -1;
     });
 
@@ -166,12 +240,46 @@ export class Cell {
 
   /**
    * Creates an effect that is immediately executed with the current value of the cell, and then added to the list of effects for the cell.
-   * @param {(newValue: T) => void} effect - The effect callback to add.
+   * @param {(newValue: T) => void} callback - The effect callback to add.
+   * @param {Partial<EffectOptions>} [options] - The options for the effect.
    * @returns {() => void} A function that can be called to remove the effect.
    */
-  runAndListen(effect) {
-    effect(this.wvalue);
-    return this.listen(effect);
+  runAndListen(callback, options) {
+    const cb = callback;
+
+    cb(this.wvalue);
+
+    if (options?.signal?.aborted) {
+      return () => {};
+    }
+
+    options?.signal?.addEventListener('abort', () => {
+      this.ignore(cb);
+    });
+
+    if (options?.once) return () => this.ignore(cb);
+
+    if (options?.name && this.isListeningTo(options.name)) {
+      const message = `An effect with the name "${options.name}" is already listening to this cell.`;
+      throw new Error(message);
+    }
+
+    const isAlreadySubscribed = this.__effects.some((e) => {
+      return e.callback === callback;
+    });
+
+    if (!isAlreadySubscribed) {
+      this.__effects.push(new Effect(cb, options));
+    }
+
+    this.__effects.sort((a, b) => {
+      const aPriority = a.options?.priority ?? 0;
+      const bPriority = b.options?.priority ?? 0;
+      if (aPriority === bPriority) return 0;
+      return aPriority < bPriority ? 1 : -1;
+    });
+
+    return () => this.ignore(cb);
   }
 
   /**
@@ -179,10 +287,12 @@ export class Cell {
    * @param {(newValue: T) => void} callback - The effect callback to remove.
    */
   ignore(callback) {
-    const index = this.effects.findIndex(({ effect }) => effect === callback);
+    const index = this.__effects.findIndex((e) => {
+      return e.callback === callback;
+    });
     if (index === -1) return;
 
-    this.effects.splice(index, 1);
+    this.__effects.splice(index, 1);
   }
 
   /**
@@ -191,7 +301,9 @@ export class Cell {
    * @returns {boolean} `true` if the cell is listening to a watcher with the specified name, `false` otherwise.
    */
   isListeningTo(name) {
-    return this.effects.some(({ options }) => options?.name === name);
+    return this.__effects.some((effect) => {
+      return effect?.options?.name === name && effect.callback;
+    });
   }
 
   /**
@@ -199,12 +311,12 @@ export class Cell {
    * @param {string} name - The name of the watcher to stop listening to.
    */
   stopListeningTo(name) {
-    const effectIndex = this.effects.findIndex(
-      ({ options }) => options?.name === name
-    );
+    const effectIndex = this.__effects.findIndex((e) => {
+      return e.options?.name === name;
+    });
     if (effectIndex === -1) return;
 
-    this.effects.splice(effectIndex, 1);
+    this.__effects.splice(effectIndex, 1);
   }
 
   /**
@@ -213,7 +325,10 @@ export class Cell {
    */
   update() {
     // Run watchers.
-    for (const { effect: watcher } of this.effects) {
+    for (const effect of this.__effects) {
+      let watcher = effect.callback;
+      if (watcher === undefined) continue;
+
       if (root.batchNestingLevel > 0) {
         root.batchedEffects.set(watcher, [this.wvalue]);
         continue;
@@ -222,16 +337,40 @@ export class Cell {
       watcher(this.wvalue);
     }
 
+    // Remove dead effects.
+    this.__effects = this.__effects.filter((effect) => effect.callback);
+
     // Run computed dependents.
-    const computedDependents = this.derivedCells;
+    const computedDependents = this.__derivedCells;
     if (computedDependents !== undefined) {
       for (const dependent of computedDependents) {
-        dependent.deref()?.update();
+        // global effects
+        for (const [options, effect] of root.globalPreEffects) {
+          if (options.ignoreDerivedCells) continue;
+
+          effect(this.wvalue);
+        }
+
+        const deref = dependent[0].deref();
+        if (deref === undefined) continue;
+
+        const computedCell = deref;
+        const computedFn = dependent[1];
+
+        if (root.batchNestingLevel > 0) {
+          root.batchedEffects.set(
+            () => computedCell.setValue(computedFn()),
+            []
+          );
+        } else {
+          computedCell.setValue(computedFn());
+        }
+        computedCell.update();
       }
     }
-    // Periodically remove dead references.
-    this.derivedCells = this.derivedCells.filter(
-      (ref) => ref.deref() !== undefined
+    // Periodically drop dead references.
+    this.__derivedCells = this.__derivedCells.filter(
+      (ref) => ref[0].deref() !== undefined
     );
 
     // global effects
@@ -380,8 +519,10 @@ export class Cell {
 
   /**
    * Checks if the provided value is an instance of the Cell class.
-   * @param {any} value - The value to check.
-   * @returns {value is Cell<any>} True if the value is an instance of Cell, false otherwise.
+   * @template [T=any]
+   * @template [U=any]
+   * @param {Cell<T> | U} value - The value to check.
+   * @returns {value is Cell<T>} True if the value is an instance of Cell, false otherwise.
    */
   static isCell = (value) => value instanceof Cell;
 
@@ -511,18 +652,11 @@ export class Cell {
  */
 export class DerivedCell extends Cell {
   /**
-   * @type {() => T}
-   * @protected
-   */
-  computedFn;
-
-  /**
    * @param {() => T} computedFn - A function that generates the value of the computed.
    */
   constructor(computedFn) {
     super();
-    this.computedFn = computedFn;
-    activeComputedValues.push(this);
+    activeComputedValues.push([this, computedFn]);
     this.setValue(computedFn());
     activeComputedValues.pop();
   }
@@ -539,26 +673,6 @@ export class DerivedCell extends Cell {
    */
   set value(_) {
     throw new Error('Cannot set a derived Cell value.');
-  }
-
-  /**
-   * Updates the current value with the result of the computed function.
-   */
-  update() {
-    // global effects
-    for (const [options, effect] of root.globalPreEffects) {
-      if (options.ignoreDerivedCells) continue;
-
-      effect(this.wvalue);
-    }
-
-    if (root.batchNestingLevel > 0) {
-      root.batchedEffects.set(() => this.setValue(this.computedFn()), []);
-    } else {
-      this.setValue(this.computedFn());
-    }
-
-    super.update();
   }
 }
 
