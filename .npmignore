@@ -2,3 +2,5 @@ tests/
 deno.json
 deno.lock
 bun.lockdb
+jsconfig.json
+tsconfig.json

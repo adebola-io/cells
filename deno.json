@@ -1,6 +1,6 @@
 {
   "name": "@adbl/cells",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "exports": "./index.js",
   "publish": {
     "exclude": [
