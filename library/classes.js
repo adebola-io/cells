@@ -326,7 +326,7 @@ export class Cell {
   update() {
     // Run watchers.
     for (const effect of this.__effects) {
-      let watcher = effect.callback;
+      const watcher = effect.callback;
       if (watcher === undefined) continue;
 
       if (root.batchNestingLevel > 0) {
@@ -713,7 +713,7 @@ export class SourceCell extends Cell {
 
     const isEqual = this.options.equals
       ? this.options.equals(oldValue, value)
-      : oldValue === value;
+      : deepEqual(oldValue, value);
 
     if (isEqual) return;
 
@@ -728,7 +728,7 @@ export class SourceCell extends Cell {
       }
     }
 
-    this.setValue(value);
+    this.setValue(this.options?.shallowProxied ? value : this.proxy(value));
     this.update();
   }
 
@@ -750,10 +750,53 @@ export class SourceCell extends Cell {
         return this.proxy(Reflect.get(target, prop));
       },
       set: (target, prop, value) => {
+        const formerValue = Reflect.get(target, prop);
         Reflect.set(target, prop, value);
-        this.update();
+
+        const isEqual = deepEqual(formerValue, value);
+        if (!isEqual) this.update();
+
         return true;
       },
     });
   }
+}
+
+/**
+ * Recursively compares two values for deep equality.
+ * @param {any} a - The first value to compare.
+ * @param {any} b - The second value to compare.
+ * @returns {boolean} - True if the values are deeply equal, false otherwise.
+ */
+function deepEqual(a, b) {
+  if (a === b) return true;
+
+  if (
+    typeof a !== typeof b ||
+    typeof a !== 'object' ||
+    a === null ||
+    b === null
+  )
+    return false;
+
+  if (Array.isArray(a)) {
+    const aLength = a.length;
+    if (!Array.isArray(b) || aLength !== b.length) return false;
+
+    for (let i = 0; i < aLength; i++) {
+      if (!deepEqual(a[i], b[i])) return false;
+    }
+  } else {
+    const keysA = Object.keys(a);
+    const keysB = Object.keys(b);
+    const keysALength = keysA.length;
+    if (keysALength !== keysB.length) return false;
+
+    for (let i = 0; i < keysALength; i++) {
+      const key = keysA[i];
+      if (a === b) return true;
+      if (!(key in b) || !deepEqual(a[key], b[key])) return false;
+    }
+  }
+  return true;
 }

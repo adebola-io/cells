@@ -20,6 +20,33 @@ describe('Cells', () => {
     expect(callback).toHaveBeenCalledWith(2);
   });
 
+  test('Cell should ignore updates for deeply equal values', () => {
+    const cell = Cell.source({
+      a: 1,
+      b: { c: 2, d: 3 },
+    });
+    const callback = vi.fn();
+    cell.listen(callback);
+
+    cell.value = {
+      a: 1,
+      b: { c: 2, d: 3 },
+    };
+    expect(callback).toHaveBeenCalledTimes(0);
+
+    cell.value = {
+      a: 1,
+      b: { c: 2, d: 4 },
+    };
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    cell.value.b.c = 2;
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    cell.value.b.c = 67;
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
   test('Cell should handle built-in operators', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
