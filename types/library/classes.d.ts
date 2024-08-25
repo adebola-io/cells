@@ -147,10 +147,10 @@ export class Cell<T> {
      */
     protected __effects: Array<Effect<T>>;
     /**
-     * @type {Array<WeakRef<[DerivedCell<any>, () => any]>>}
+     * @type {Array<[WeakRef<DerivedCell<any>>, () => any]>}
      * @protected
      */
-    protected __derivedCells: Array<WeakRef<[DerivedCell<any>, () => any]>>;
+    protected __derivedCells: Array<[WeakRef<DerivedCell<any>>, () => any]>;
     /**
      * @readonly
      */

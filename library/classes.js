@@ -593,6 +593,8 @@ export class Cell {
 
     async function run(input = initialInput) {
       pending.value = true;
+      error.value = null;
+      data.value = null;
       try {
         initialInput = input;
         const result = await getter(/** @type {X} */ (input));
