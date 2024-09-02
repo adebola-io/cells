@@ -686,6 +686,9 @@ export class SourceCell extends Cell {
   /** @type {Partial<CellOptions<T>>} */
   options;
 
+  /** @type {object | undefined} */
+  #originalObject;
+
   /**
    * Creates a new Cell with the provided value.
    * @param {T} value
@@ -696,6 +699,32 @@ export class SourceCell extends Cell {
 
     this.setValue(options?.shallowProxied ? value : this.proxy(value));
     this.options = options ?? {};
+
+    if (typeof value === 'object' && value !== null) {
+      this.#originalObject = value;
+    }
+  }
+
+  /**
+   * For cells containing objects, returns the object itself.
+   * This can be useful in scenarios where unfettered access to the original object is needed,
+   * such as when using the object as a cache.
+   *
+   * @example
+   * const cell = new SourceCell({ a: 1, b: 2 });
+   * console.log(cell.originalObject); // { a: 1, b: 2 }
+   *
+   * cell.value = { a: 3, b: 4 };
+   * console.log(cell.originalObject); // { a: 3, b: 4 }
+   *
+   * @returns {T extends object ? T : never} The original object if T is an object, otherwise never.
+   */
+  deproxy() {
+    const originalObject = this.#originalObject;
+    if (typeof originalObject === 'object' && originalObject !== null) {
+      return /** @type {T extends object ? T : never} */ (originalObject);
+    }
+    throw new Error('Cannot deproxy a non-object cell.');
   }
 
   get value() {
@@ -731,6 +760,9 @@ export class SourceCell extends Cell {
     }
 
     this.setValue(this.options?.shallowProxied ? value : this.proxy(value));
+    if (typeof value === 'object' && value !== null) {
+      this.#originalObject = value;
+    }
     this.update();
   }
 

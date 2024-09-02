@@ -265,6 +265,21 @@ export class SourceCell<T> extends Cell<T> {
     /** @type {Partial<CellOptions<T>>} */
     options: Partial<CellOptions<T>>;
     /**
+     * For cells containing objects, returns the object itself.
+     * This can be useful in scenarios where unfettered access to the original object is needed,
+     * such as when using the object as a cache.
+     *
+     * @example
+     * const cell = new SourceCell({ a: 1, b: 2 });
+     * console.log(cell.originalObject); // { a: 1, b: 2 }
+     *
+     * cell.value = { a: 3, b: 4 };
+     * console.log(cell.originalObject); // { a: 3, b: 4 }
+     *
+     * @returns {T extends object ? T : never} The original object if T is an object, otherwise never.
+     */
+    deproxy(): T extends object ? T : never;
+    /**
      * Sets the value stored in the Cell and triggers an update.
      * @param {T} value
      */
@@ -278,6 +293,7 @@ export class SourceCell<T> extends Cell<T> {
      * @private
      */
     private proxy;
+    #private;
 }
 export type AsyncRequestAtoms<Input, Output> = {
     /**

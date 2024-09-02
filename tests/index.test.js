@@ -667,3 +667,18 @@ describe('Cell options', () => {
     expect(callback).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('SourceCell deproxy', () => {
+  test('Deproxies should return the original object', () => {
+    const original = { a: 1, b: 2 };
+    const cell = new SourceCell(original);
+    expect(cell.deproxy()).toBe(original);
+  });
+
+  test('should throw an error on deproxy if the cell is not an object', () => {
+    const cell = new SourceCell(1);
+    expect(() => {
+      cell.deproxy();
+    }).toThrowError('Cannot deproxy a non-object cell.');
+  });
+});
