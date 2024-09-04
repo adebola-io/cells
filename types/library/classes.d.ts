@@ -142,16 +142,6 @@ export class Cell<T> {
      */
     static async<X, Y>(getter: (input: X) => Promise<Y>): AsyncRequestAtoms<X, Y>;
     /**
-     * @type {Array<Effect<T>>}
-     * @protected
-     */
-    protected __effects: Array<Effect<T>>;
-    /**
-     * @type {Array<[WeakRef<DerivedCell<any>>, () => any]>}
-     * @protected
-     */
-    protected __derivedCells: Array<[WeakRef<DerivedCell<any>>, () => any]>;
-    /**
      * @readonly
      */
     readonly get effects(): Effect<T>[];
@@ -230,6 +220,7 @@ export class Cell<T> {
      * @returns {T} - The current value of the cell.
      */
     peek(): T;
+    #private;
 }
 /**
  * A class that represents a computed value that depends on other reactive values.
@@ -285,14 +276,6 @@ export class SourceCell<T> extends Cell<T> {
      */
     set value(value: T);
     get value(): T;
-    /**
-     * Proxies the provided value deeply, allowing it to be observed and updated.
-     * @template T
-     * @param {T} value - The value to be proxied.
-     * @returns {T} - The proxied value.
-     * @private
-     */
-    private proxy;
     #private;
 }
 export type AsyncRequestAtoms<Input, Output> = {
@@ -345,9 +328,9 @@ export type CellOptions<T> = {
      */
     immutable?: boolean | undefined;
     /**
-     * Whether the cell's value should be shallowly proxied. If set to true, the cell will only proxy the top-level properties of the value, preventing any changes to nested properties. This can be useful for performance optimizations.
+     * Whether the cell should watch for changes deep into the given value. By default the cell only reacts to changes at the top level.
      */
-    shallowProxied?: boolean | undefined;
+    deep?: boolean | undefined;
     /**
      * A function that determines whether two values are equal. If not provided, the default equality function will be used.
      */

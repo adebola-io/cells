@@ -21,10 +21,13 @@ describe('Cells', () => {
   });
 
   test('Cell should ignore updates for deeply equal values', () => {
-    const cell = Cell.source({
-      a: 1,
-      b: { c: 2, d: 3 },
-    });
+    const cell = Cell.source(
+      {
+        a: 1,
+        b: { c: 2, d: 3 },
+      },
+      { deep: true }
+    );
     const callback = vi.fn();
     cell.listen(callback);
 
@@ -329,6 +332,21 @@ describe('Nested cells', () => {
     expect(derived.value).toBe(22);
   });
 
+  test('Cell of map type should be able to read entries', () => {
+    const cell = Cell.source(new Map());
+    cell.value.set('a', 1);
+    cell.value.set('b', 2);
+
+    const array = Cell.derived(() => Array.from(cell.value.entries()));
+
+    cell.value.set('c', 3);
+    expect(array.value).toEqual([
+      ['a', 1],
+      ['b', 2],
+      ['c', 3],
+    ]);
+  });
+
   test('Cell of array type should be reactive', () => {
     const cell = Cell.source([1, 2, 3]);
 
@@ -347,7 +365,7 @@ describe('Nested cells', () => {
 
   test('Cell of nested array type should be reactive', () => {
     /** @type {SourceCell<[number, [number, number], number]>} */
-    const cell = Cell.source([1, [2, 3], 4]);
+    const cell = Cell.source([1, [2, 3], 4], { deep: true });
     const d1 = Cell.derived(() => cell.value[1][1] + 2);
     const d2 = Cell.derived(() => cell.value[1][0] + d1.value);
 
@@ -357,6 +375,36 @@ describe('Nested cells', () => {
 
     expect(d1.value).toBe(7);
     expect(d2.value).toBe(9);
+  });
+
+  test('Cells of maps should be reactive', () => {
+    const cell = Cell.source(new Map());
+    const derived = Cell.derived(() => cell.value.get('a'));
+
+    expect(derived.value).toBe(undefined);
+
+    cell.value.set('a', 1);
+    expect(derived.value).toBe(1);
+
+    cell.value.set('a', 2);
+    expect(derived.value).toBe(2);
+  });
+
+  test('Cells of sets should be reactive', () => {
+    const cell = Cell.source(new Set());
+    const derived = Cell.derived(() => cell.value.has(1));
+    const size = Cell.derived(() => cell.value.size);
+
+    expect(derived.value).toBe(false);
+    expect(size.value).toBe(0);
+
+    cell.value.add(1);
+    expect(derived.value).toBe(true);
+    expect(size.value).toBe(1);
+
+    cell.value.add(2);
+    expect(derived.value).toBe(true);
+    expect(size.value).toBe(2);
   });
 
   test('Cell should handle built-in operators on objects', () => {
@@ -628,20 +676,23 @@ describe('Effect options', () => {
 });
 
 describe('Cell options', () => {
-  test('Cells should be deeply proxied by default', () => {
-    const cell = Cell.source({ a: 1 });
+  test('Cells should be deeply proxied if specified', () => {
+    const cell = Cell.source({ a: 1, b: { c: 5 } }, { deep: true });
+    const callback = vi.fn();
+    cell.listen(callback);
+    cell.value.b.c = 2;
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  test('Cells should be shallowly proxied by default', () => {
+    const cell = Cell.source({ a: 1, b: { c: 5 } });
     const callback = vi.fn();
     cell.listen(callback);
     cell.value.a = 2;
     expect(callback).toHaveBeenCalledTimes(1);
-  });
 
-  test('Cells should be shallowly proxied if specified', () => {
-    const cell = Cell.source({ a: 1 }, { shallowProxied: true });
-    const callback = vi.fn();
-    cell.listen(callback);
-    cell.value.a = 2;
-    expect(callback).toHaveBeenCalledTimes(0);
+    cell.value.b.c = 90;
+    expect(callback).toHaveBeenCalledOnce();
   });
 
   test('Immutable cells should not allow updates', () => {

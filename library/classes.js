@@ -36,8 +36,8 @@
  * @typedef {object} CellOptions
  * @property {boolean} [immutable]
  * Whether the cell should be immutable. If set to true, the cell will not allow updates and will throw an error if the value is changed.
- * @property {boolean} [shallowProxied]
- * Whether the cell's value should be shallowly proxied. If set to true, the cell will only proxy the top-level properties of the value, preventing any changes to nested properties. This can be useful for performance optimizations.
+ * @property {boolean} [deep]
+ * Whether the cell should watch for changes deep into the given value. By default the cell only reacts to changes at the top level.
  * @property {(oldValue: T, newValue: T) => boolean} [equals]
  * A function that determines whether two values are equal. If not provided, the default equality function will be used.
  */
@@ -48,6 +48,69 @@
  */
 
 import { activeComputedValues, root } from './root.js';
+const mutativeMethods = {
+  Map: {
+    set: Symbol('set'),
+    delete: Symbol('delete'),
+    clear: Symbol('clear'),
+  },
+  Set: {
+    add: Symbol('add'),
+    delete: Symbol('delete'),
+    clear: Symbol('clear'),
+  },
+  Array: {
+    push: Symbol('push'),
+    pop: Symbol('pop'),
+    shift: Symbol('shift'),
+    unshift: Symbol('unshift'),
+    splice: Symbol('splice'),
+    sort: Symbol('sort'),
+    reverse: Symbol('reverse'),
+  },
+  Date: {
+    setDate: Symbol('setDate'),
+    setMonth: Symbol('setMonth'),
+    setFullYear: Symbol('setFullYear'),
+    setHours: Symbol('setHours'),
+    setMinutes: Symbol('setMinutes'),
+    setSeconds: Symbol('setSeconds'),
+    setMilliseconds: Symbol('setMilliseconds'),
+  },
+};
+const mutativeMapMethods = /^(set|delete|clear)$/;
+const mutativeSetMethods = /^(add|delete|clear)$/;
+const mutativeArrayMethods = /^(push|pop|shift|unshift|splice|sort|reverse)$/;
+const mutativeDateMethods =
+  /^(setDate|setMonth|setFullYear|setHours|setMinutes|setSeconds|setMilliseconds)$/;
+
+/**
+ * Proxies mutative methods of a given value to trigger cell updates when called.
+ *
+ * @template {object} T
+ * @param {T} value - The object whose methods are to be proxied.
+ * @param {keyof typeof mutativeMethods} prototypeName - The name of the prototype (e.g., 'Map', 'Set') whose methods are being proxied.
+ * @param {Cell<any>} cell - The cell to be updated when a mutative method is called.
+ */
+const proxyMutativeMethods = (value, prototypeName, cell) => {
+  for (const method in mutativeMethods[prototypeName]) {
+    Reflect.set(
+      value,
+      Reflect.get(mutativeMethods[prototypeName], method),
+      /**
+       * @param {...any} args - The arguments passed to the mutative method.
+       * @returns {any} The result of calling the original method.
+       */
+      (...args) => {
+        // @ts-ignore
+        const innerMethod = value[method]; // Direct access is faster than Reflection here.
+        const result = innerMethod.apply(value, args);
+        cell.update();
+        return result;
+      }
+    );
+  }
+};
 
 /**
  * @template T
@@ -99,21 +162,19 @@ class Effect {
 export class Cell {
   /**
    * @type {Array<Effect<T>>}
-   * @protected
    */
-  __effects = [];
+  #effects = [];
 
   /**
    * @type {Array<[WeakRef<DerivedCell<any>>, () => any]>}
-   * @protected
    */
-  __derivedCells = [];
+  #derivedCells = [];
 
   /**
    * @readonly
    */
   get effects() {
-    return this.__effects;
+    return this.#effects;
   }
 
   /**
@@ -122,7 +183,7 @@ export class Cell {
    */
   get derivedCells() {
     // @ts-ignore
-    return this.__derivedCells.map((cell) => cell.deref()).filter(Boolean);
+    return this.#derivedCells.map((cell) => cell.deref()).filter(Boolean);
   }
 
   /**
@@ -167,12 +228,12 @@ export class Cell {
     const currentlyComputedValue = activeComputedValues.at(-1);
 
     if (currentlyComputedValue !== undefined) {
-      const isAlreadySubscribed = this.__derivedCells.some(
+      const isAlreadySubscribed = this.#derivedCells.some(
         (ref) => ref[0].deref() === currentlyComputedValue[0]
       );
       if (isAlreadySubscribed) return this.wvalue;
 
-      this.__derivedCells.push([
+      this.#derivedCells.push([
         new WeakRef(currentlyComputedValue[0]),
         currentlyComputedValue[1],
       ]);
@@ -219,15 +280,15 @@ export class Cell {
       );
     }
 
-    const isAlreadySubscribed = this.__effects.some((effect) => {
+    const isAlreadySubscribed = this.#effects.some((effect) => {
       return effect.callback === callback;
     });
 
     if (!isAlreadySubscribed) {
-      this.__effects.push(new Effect(callback, options));
+      this.#effects.push(new Effect(callback, options));
     }
 
-    this.__effects.sort((a, b) => {
+    this.#effects.sort((a, b) => {
       const aPriority = a.options?.priority ?? 0;
       const bPriority = b.options?.priority ?? 0;
 
@@ -264,15 +325,15 @@ export class Cell {
       throw new Error(message);
     }
 
-    const isAlreadySubscribed = this.__effects.some((e) => {
+    const isAlreadySubscribed = this.#effects.some((e) => {
       return e.callback === callback;
     });
 
     if (!isAlreadySubscribed) {
-      this.__effects.push(new Effect(cb, options));
+      this.#effects.push(new Effect(cb, options));
     }
 
-    this.__effects.sort((a, b) => {
+    this.#effects.sort((a, b) => {
       const aPriority = a.options?.priority ?? 0;
       const bPriority = b.options?.priority ?? 0;
       if (aPriority === bPriority) return 0;
@@ -287,12 +348,12 @@ export class Cell {
    * @param {(newValue: T) => void} callback - The effect callback to remove.
    */
   ignore(callback) {
-    const index = this.__effects.findIndex((e) => {
+    const index = this.#effects.findIndex((e) => {
       return e.callback === callback;
     });
     if (index === -1) return;
 
-    this.__effects.splice(index, 1);
+    this.#effects.splice(index, 1);
   }
 
   /**
@@ -301,7 +362,7 @@ export class Cell {
    * @returns {boolean} `true` if the cell is listening to a watcher with the specified name, `false` otherwise.
    */
   isListeningTo(name) {
-    return this.__effects.some((effect) => {
+    return this.#effects.some((effect) => {
       return effect?.options?.name === name && effect.callback;
     });
   }
@@ -311,12 +372,12 @@ export class Cell {
    * @param {string} name - The name of the watcher to stop listening to.
    */
   stopListeningTo(name) {
-    const effectIndex = this.__effects.findIndex((e) => {
+    const effectIndex = this.#effects.findIndex((e) => {
       return e.options?.name === name;
     });
     if (effectIndex === -1) return;
 
-    this.__effects.splice(effectIndex, 1);
+    this.#effects.splice(effectIndex, 1);
   }
 
   /**
@@ -325,7 +386,7 @@ export class Cell {
    */
   update() {
     // Run watchers.
-    for (const effect of this.__effects) {
+    for (const effect of this.#effects) {
       const watcher = effect.callback;
       if (watcher === undefined) continue;
 
@@ -338,10 +399,10 @@ export class Cell {
     }
 
     // Remove dead effects.
-    this.__effects = this.__effects.filter((effect) => effect.callback);
+    this.#effects = this.#effects.filter((effect) => effect.callback);
 
     // Run computed dependents.
-    const computedDependents = this.__derivedCells;
+    const computedDependents = this.#derivedCells;
     if (computedDependents !== undefined) {
       for (const dependent of computedDependents) {
         // global effects
@@ -369,7 +430,7 @@ export class Cell {
       }
     }
     // Periodically drop dead references.
-    this.__derivedCells = this.__derivedCells.filter(
+    this.#derivedCells = this.#derivedCells.filter(
       (ref) => ref[0].deref() !== undefined
     );
 
@@ -697,8 +758,8 @@ export class SourceCell extends Cell {
   constructor(value, options) {
     super();
 
-    this.setValue(options?.shallowProxied ? value : this.proxy(value));
     this.options = options ?? {};
+    this.setValue(this.#proxy(value));
 
     if (typeof value === 'object' && value !== null) {
       this.#originalObject = value;
@@ -759,7 +820,7 @@ export class SourceCell extends Cell {
       }
     }
 
-    this.setValue(this.options?.shallowProxied ? value : this.proxy(value));
+    this.setValue(this.#proxy(value));
     if (typeof value === 'object' && value !== null) {
       this.#originalObject = value;
     }
@@ -771,17 +832,62 @@ export class SourceCell extends Cell {
    * @template T
    * @param {T} value - The value to be proxied.
    * @returns {T} - The proxied value.
-   * @private
    */
-  proxy(value) {
+  #proxy(value) {
     if (typeof value !== 'object' || value === null) {
       return value;
+    }
+
+    if (value instanceof Map) {
+      proxyMutativeMethods(value, 'Map', this);
+    } else if (value instanceof Set) {
+      proxyMutativeMethods(value, 'Set', this);
+    } else if (value instanceof Date) {
+      proxyMutativeMethods(value, 'Date', this);
+    } else if (ArrayBuffer.isView(value) || Array.isArray(value)) {
+      proxyMutativeMethods(value, 'Array', this);
     }
 
     return new Proxy(value, {
       get: (target, prop) => {
         this.revalued;
-        return this.proxy(Reflect.get(target, prop));
+        if (this.options.deep) {
+          // @ts-ignore: Direct access is faster than Reflection here.
+          return this.#proxy(target[prop]);
+        }
+        // @ts-ignore: Direct access is faster than Reflection here.
+        let value = target[prop];
+
+        if (typeof value === 'function') {
+          value = value.bind(target);
+        }
+
+        if (typeof prop === 'string') {
+          if (target instanceof Map && mutativeMapMethods.test(prop)) {
+            // @ts-ignore: Direct access is faster than Reflection here.
+            return target[mutativeMethods.Map[prop]];
+          }
+
+          if (target instanceof Set && mutativeSetMethods.test(prop)) {
+            // @ts-ignore: Direct access is faster than Reflection here.
+            return target[mutativeMethods.Set[prop]];
+          }
+
+          if (target instanceof Date && mutativeDateMethods.test(prop)) {
+            // @ts-ignore: Direct access is faster than Reflection here.
+            return target[mutativeMethods.Date[prop]];
+          }
+
+          if (
+            (ArrayBuffer.isView(target) || Array.isArray(target)) &&
+            mutativeArrayMethods.test(prop)
+          ) {
+            // @ts-ignore: Direct access is faster than Reflection here.
+            return target[mutativeMethods.Array[prop]];
+          }
+        }
+
+        return value;
       },
       set: (target, prop, value) => {
         const formerValue = Reflect.get(target, prop);

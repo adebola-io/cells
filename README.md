@@ -186,7 +186,7 @@ When creating a source cell, you have fine-grained control over its behavior:
 ```javascript
 const cell = Cell.source(initialValue, {
   immutable: boolean, // If true, the cell will not allow updates
-  shallowProxied: boolean, // If true, only top-level properties are proxied
+  deep: boolean, // By default, the cell only reacts to changes at the top level of objects. Setting deep to true will proxy the cell to all nested properties and trigger updates when they change as well.
   equals: (oldValue, newValue) => boolean, // Custom equality function
 });
 ```
