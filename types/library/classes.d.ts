@@ -1,7 +1,7 @@
 /**
- * @template T
+ * @template {*} T
  */
-export class Cell<T> {
+export class Cell<T extends unknown> {
     /**
      * Adds a global effect that runs before any Cell is updated.
      * @param {(value: unknown) => void} effect - The effect function.
@@ -122,7 +122,7 @@ export class Cell<T> {
      * @param {T} object - The object to be flattened.
      * @returns {{ [K in keyof T]: T[K] extends Cell<infer U> ? U : T[K] }} A new object with the flattened values.
      */
-    static flattenObject: <T_6 extends object>(object: T_6) => { [K in keyof T_6]: T_6[K] extends Cell<infer U_1> ? U_1 : T_6[K]; };
+    static flattenObject: <T_6 extends object>(object: T_6) => { [K in keyof T_6]: T_6[K] extends Cell<infer U_1 extends unknown> ? U_1 : T_6[K]; };
     /**
      * Wraps an asynchronous function with managed state.
      *
@@ -141,10 +141,6 @@ export class Cell<T> {
      * run('input');
      */
     static async<X, Y>(getter: (input: X) => Promise<Y>): AsyncRequestAtoms<X, Y>;
-    /**
-     * @readonly
-     */
-    readonly get effects(): Effect<T>[];
     /**
      * @readonly
      * @returns {Array<DerivedCell<any>>}
@@ -175,11 +171,6 @@ export class Cell<T> {
      * @protected @type {T}
      */
     protected get revalued(): T;
-    /**
-     * Sets a callback function that will be called whenever the value of the Cell changes.
-     * @param {(newValue: T) => void} callback - The function to be called when the value changes.
-     */
-    set onchange(callback: (newValue: T) => void);
     /**
      * Adds the provided effect callback to the list of effects for this cell, and returns a function that can be called to remove the effect.
      * @param {(newValue: T) => void} callback - The effect callback to add.
@@ -225,10 +216,10 @@ export class Cell<T> {
 /**
  * A class that represents a computed value that depends on other reactive values.
  * The computed value is automatically updated when any of its dependencies change.
- * @template T
+ * @template {*} T
  * @extends {Cell<T>}
  */
-export class DerivedCell<T> extends Cell<T> {
+export class DerivedCell<T extends unknown> extends Cell<T> {
     /**
      * @param {() => T} computedFn - A function that generates the value of the computed.
      */
@@ -243,10 +234,10 @@ export class DerivedCell<T> extends Cell<T> {
     readonly get value(): T;
 }
 /**
- * @template T
+ * @template {*} T
  * @extends {Cell<T>}
  */
-export class SourceCell<T> extends Cell<T> {
+export class SourceCell<T extends unknown> extends Cell<T> {
     /**
      * Creates a new Cell with the provided value.
      * @param {T} value
@@ -340,28 +331,3 @@ export type NeverIfAny<T> = 0 extends (1 & T) ? never : T;
 export type Reference<T> = {
     deref: () => T | undefined;
 };
-/**
- * @template T
- * @typedef {{
- *    deref: () => T | undefined
- * }} Reference
- */
-/** @template T */
-declare class Effect<T> {
-    /**
-     * @param {(newValue: T) => void} callback
-     * @param {EffectOptions} [options]
-     */
-    constructor(callback: (newValue: T) => void, options?: EffectOptions | undefined);
-    /**
-     * @type {EffectOptions | undefined}
-     */
-    options: EffectOptions | undefined;
-    /**
-     * Returns the callback function, if it still exists.
-     * @returns {((newValue: T) => void) | undefined}
-     */
-    get callback(): ((newValue: T) => void) | undefined;
-    #private;
-}
-export {};

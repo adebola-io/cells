@@ -157,7 +157,7 @@ class Effect {
 }
 
 /**
- * @template T
+ * @template {*} T
  */
 export class Cell {
   /**
@@ -169,13 +169,6 @@ export class Cell {
    * @type {Array<[WeakRef<DerivedCell<any>>, () => any]>}
    */
   #derivedCells = [];
-
-  /**
-   * @readonly
-   */
-  get effects() {
-    return this.#effects;
-  }
 
   /**
    * @readonly
@@ -240,14 +233,6 @@ export class Cell {
     }
 
     return this.wvalue;
-  }
-
-  /**
-   * Sets a callback function that will be called whenever the value of the Cell changes.
-   * @param {(newValue: T) => void} callback - The function to be called when the value changes.
-   */
-  set onchange(callback) {
-    this.listen(callback);
   }
 
   /**
@@ -386,16 +371,20 @@ export class Cell {
    */
   update() {
     // Run watchers.
-    for (const effect of this.#effects) {
-      const watcher = effect.callback;
+    const batchNestingLevel = root.batchNestingLevel;
+    const wvalue = this.wvalue;
+    const effects = this.#effects;
+    const len = effects.length;
+
+    for (let i = 0; i < len; i++) {
+      const watcher = effects[i].callback;
       if (watcher === undefined) continue;
 
-      if (root.batchNestingLevel > 0) {
-        root.batchedEffects.set(watcher, [this.wvalue]);
-        continue;
+      if (batchNestingLevel > 0) {
+        root.batchedEffects.set(watcher, [wvalue]);
+      } else {
+        watcher(wvalue);
       }
-
-      watcher(this.wvalue);
     }
 
     // Remove dead effects.
@@ -710,7 +699,7 @@ export class Cell {
 /**
  * A class that represents a computed value that depends on other reactive values.
  * The computed value is automatically updated when any of its dependencies change.
- * @template T
+ * @template {*} T
  * @extends {Cell<T>}
  */
 export class DerivedCell extends Cell {
@@ -719,9 +708,14 @@ export class DerivedCell extends Cell {
    */
   constructor(computedFn) {
     super();
-    activeComputedValues.push([this, computedFn]);
-    this.setValue(computedFn());
-    activeComputedValues.pop();
+    // Ensures that the cell is derived every time the computing function is called.
+    const derivationWrapper = () => {
+      activeComputedValues.push([this, derivationWrapper]);
+      const value = computedFn();
+      activeComputedValues.pop();
+      return value;
+    };
+    this.setValue(derivationWrapper());
   }
 
   /**
@@ -740,7 +734,7 @@ export class DerivedCell extends Cell {
 }
 
 /**
- * @template T
+ * @template {*} T
  * @extends {Cell<T>}
  */
 export class SourceCell extends Cell {
