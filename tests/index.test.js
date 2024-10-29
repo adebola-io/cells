@@ -733,3 +733,14 @@ describe('SourceCell deproxy', () => {
     }).toThrowError('Cannot deproxy a non-object cell.');
   });
 });
+
+describe('Derived Cells', () => {
+  test('derived cells should be available', () => {
+
+    const s = Cell.source(1);
+    const f = Cell.derived(() => s.value + 1);
+
+    const derived = s.derivedCells
+    expect(derived).toEqual([f]);
+  })
+})

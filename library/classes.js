@@ -176,7 +176,7 @@ export class Cell {
    */
   get derivedCells() {
     // @ts-ignore
-    return this.#derivedCells.map((cell) => cell.deref()).filter(Boolean);
+    return this.#derivedCells.map((cell) => cell[0].deref()).filter(Boolean);
   }
 
   /**
