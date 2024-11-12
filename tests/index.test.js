@@ -332,6 +332,20 @@ describe('Nested cells', () => {
     expect(derived.value).toBe(22);
   });
 
+  test('Derived cell of object type should run callback when value changes', () => {
+    const cell = Cell.source({ a: 'hello', b: 1, c: true, d: null });
+    const callback = vi.fn();
+
+    Cell.derived(() => {
+      callback();
+      return cell.value.a;
+    });
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    cell.value = { a: 'world', b: 2, c: false, d: null };
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
   test('Cell of map type should be able to read entries', () => {
     const cell = Cell.source(new Map());
     cell.value.set('a', 1);
@@ -692,7 +706,7 @@ describe('Cell options', () => {
     expect(callback).toHaveBeenCalledTimes(1);
 
     cell.value.b.c = 90;
-    expect(callback).toHaveBeenCalledOnce();
+    expect(callback).toHaveBeenCalledTimes(1);
   });
 
   test('Immutable cells should not allow updates', () => {
@@ -736,11 +750,10 @@ describe('SourceCell deproxy', () => {
 
 describe('Derived Cells', () => {
   test('derived cells should be available', () => {
-
     const s = Cell.source(1);
     const f = Cell.derived(() => s.value + 1);
 
-    const derived = s.derivedCells
+    const derived = s.derivedCells;
     expect(derived).toEqual([f]);
-  })
-})
+  });
+});
