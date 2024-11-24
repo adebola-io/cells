@@ -316,6 +316,24 @@ describe('Derived cells', () => {
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
   });
+
+  test('Cell.derived should not update if the value is the same', () => {
+    const cell = Cell.source('hello');
+    const callback = vi.fn();
+
+    const derived = Cell.derived(() => {
+      return cell.value.length;
+    });
+    expect(derived.value).toBe(5);
+
+    derived.listen(callback);
+
+    cell.value = 'world';
+
+    expect(derived.value).toBe(5);
+
+    expect(callback).toHaveBeenCalledTimes(0);
+  });
 });
 
 describe('Nested cells', () => {

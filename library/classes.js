@@ -413,7 +413,10 @@ export class Cell {
             []
           );
         } else {
-          computedCell.setValue(computedFn());
+          const newValue = computedFn();
+          const isSameValue = deepEqual(computedCell.value, newValue);
+          computedCell.setValue(newValue);
+          if (isSameValue) continue;
         }
         computedCell.update();
       }
@@ -587,9 +590,11 @@ export class Cell {
     return value instanceof Cell
       ? Cell.flatten(value.wvalue)
       : Array.isArray(value)
-      ? Cell.flattenArray(value)
+      ? // @ts-ignore:
+        Cell.flattenArray(value)
       : value instanceof Object
-      ? Cell.flattenObject(value)
+      ? // @ts-ignore:
+        Cell.flattenObject(value)
       : value;
   };
 
