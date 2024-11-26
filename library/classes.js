@@ -210,7 +210,7 @@ export class Cell {
    */
   toString() {
     // @ts-ignore
-    return this.wvalue.toString();
+    return String(this.wvalue);
   }
 
   /**
