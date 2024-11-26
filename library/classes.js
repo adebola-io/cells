@@ -918,6 +918,15 @@ function deepEqual(a, b) {
   )
     return false;
 
+  if (a instanceof Date) {
+    if (!(b instanceof Date)) {
+      return false;
+    }
+    if (a.getTime() !== b.getTime()) {
+      return false;
+    }
+  }
+
   if (Array.isArray(a)) {
     const aLength = a.length;
     if (!Array.isArray(b) || aLength !== b.length) return false;

@@ -439,6 +439,20 @@ describe('Nested cells', () => {
     expect(size.value).toBe(2);
   });
 
+  test('Cells of dates should be reactive', () => {
+    const cell = Cell.source(new Date());
+    const callback = vi.fn();
+    cell.listen(callback);
+
+    cell.value = new Date(2022, 1, 1);
+    expect(callback).toHaveBeenCalledTimes(1);
+    cell.value = new Date(2022, 1, 1);
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    cell.value.setMonth(2);
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
   test('Cell should handle built-in operators on objects', () => {
     const cell = Cell.source({ a: 1, b: 2 });
     const derived = Cell.derived(() => cell.value.a + cell.value.b);
