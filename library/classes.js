@@ -166,7 +166,7 @@ export class Cell {
   #effects = [];
 
   /**
-   * @type {Array<[WeakRef<DerivedCell<any>>, () => any]>}
+   * @type {Array<WeakRef<DerivedCell<any>>>}
    */
   #derivedCells = [];
 
@@ -176,7 +176,7 @@ export class Cell {
    */
   get derivedCells() {
     // @ts-ignore
-    return this.#derivedCells.map((cell) => cell[0].deref()).filter(Boolean);
+    return this.#derivedCells.map((cell) => cell.deref()).filter(Boolean);
   }
 
   /**
@@ -222,14 +222,11 @@ export class Cell {
 
     if (currentlyComputedValue !== undefined) {
       const isAlreadySubscribed = this.#derivedCells.some(
-        (ref) => ref[0].deref() === currentlyComputedValue[0]
+        (ref) => ref.deref() === currentlyComputedValue
       );
       if (isAlreadySubscribed) return this.wvalue;
 
-      this.#derivedCells.push([
-        new WeakRef(currentlyComputedValue[0]),
-        currentlyComputedValue[1],
-      ]);
+      this.#derivedCells.push(new WeakRef(currentlyComputedValue));
     }
 
     return this.wvalue;
@@ -401,11 +398,11 @@ export class Cell {
           effect(this.wvalue);
         }
 
-        const deref = dependent[0].deref();
+        const deref = dependent.deref();
         if (deref === undefined) continue;
 
         const computedCell = deref;
-        const computedFn = dependent[1];
+        const computedFn = deref.computedFn;
 
         if (root.batchNestingLevel > 0) {
           root.batchedEffects.set(
@@ -422,9 +419,7 @@ export class Cell {
       }
     }
     // Periodically drop dead references.
-    this.#derivedCells = this.#derivedCells.filter(
-      (ref) => ref[0].deref() !== undefined
-    );
+    this.#derivedCells = this.#derivedCells.filter((ref) => ref.deref());
 
     // global effects
     for (const [options, effect] of root.globalPostEffects) {
@@ -555,12 +550,14 @@ export class Cell {
   static derived = (callback) => new DerivedCell(callback);
 
   /**
+   * @template X
    * Batches all the effects created to run only once.
-   * @param {() => void} callback - The function to be executed in a batched manner.
+   * @param {() => X} callback - The function to be executed in a batched manner.
+   * @returns {X} The return value of the callback.
    */
   static batch = (callback) => {
     root.batchNestingLevel++;
-    callback();
+    const value = callback();
     root.batchNestingLevel--;
     if (root.batchNestingLevel === 0) {
       for (const [effect, args] of root.batchedEffects) {
@@ -568,6 +565,7 @@ export class Cell {
       }
       root.batchedEffects = new Map();
     }
+    return value;
   };
 
   /**
@@ -650,19 +648,22 @@ export class Cell {
       pending.value = true;
       error.value = null;
       data.value = null;
-      try {
-        initialInput = input;
-        const result = await getter(/** @type {X} */ (input));
-        data.value = result;
-      } catch (e) {
-        if (e instanceof Error) {
-          error.value = e;
-        } else {
-          throw e;
+
+      await Cell.batch(async () => {
+        try {
+          initialInput = input;
+          const result = await getter(/** @type {X} */ (input));
+          data.value = result;
+        } catch (e) {
+          if (e instanceof Error) {
+            error.value = e;
+          } else {
+            throw e;
+          }
+        } finally {
+          pending.value = false;
         }
-      } finally {
-        pending.value = false;
-      }
+      });
     }
 
     /**
@@ -673,6 +674,7 @@ export class Cell {
       if (changeLoadingState) {
         pending.value = true;
       }
+
       try {
         const result = await getter(
           /** @type {X} */ (newInput ?? initialInput)
@@ -715,13 +717,17 @@ export class DerivedCell extends Cell {
     super();
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
-      activeComputedValues.push([this, derivationWrapper]);
+      activeComputedValues.push(this);
       const value = computedFn();
       activeComputedValues.pop();
       return value;
     };
     this.setValue(derivationWrapper());
+    this.computedFn = computedFn;
   }
+
+  /** @type {() => T} */
+  computedFn;
 
   /**
    * @readonly
