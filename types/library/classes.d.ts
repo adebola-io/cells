@@ -90,10 +90,12 @@ export class Cell<T extends unknown> {
      */
     static derived: <T_2>(callback: () => T_2) => DerivedCell<T_2>;
     /**
+     * @template X
      * Batches all the effects created to run only once.
-     * @param {() => void} callback - The function to be executed in a batched manner.
+     * @param {() => X} callback - The function to be executed in a batched manner.
+     * @returns {X} The return value of the callback.
      */
-    static batch: (callback: () => void) => void;
+    static batch: <X>(callback: () => X) => X;
     /**
      * Checks if the provided value is an instance of the Cell class.
      * @template [T=any]
@@ -140,7 +142,7 @@ export class Cell<T extends unknown> {
      *
      * run('input');
      */
-    static async<X, Y>(getter: (input: X) => Promise<Y>): AsyncRequestAtoms<X, Y>;
+    static async<X_1, Y>(getter: (input: X_1) => Promise<Y>): AsyncRequestAtoms<X_1, Y>;
     /**
      * @readonly
      * @returns {Array<DerivedCell<any>>}
@@ -224,6 +226,8 @@ export class DerivedCell<T extends unknown> extends Cell<T> {
      * @param {() => T} computedFn - A function that generates the value of the computed.
      */
     constructor(computedFn: () => T);
+    /** @type {() => T} */
+    computedFn: () => T;
     /**
      * @readonly
      */
