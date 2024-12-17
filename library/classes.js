@@ -828,6 +828,8 @@ export class SourceCell extends Cell {
     this.setValue(this.#proxy(value));
     if (typeof value === 'object' && value !== null) {
       this.#originalObject = value;
+    } else {
+      this.#originalObject = undefined;
     }
     this.update();
   }
