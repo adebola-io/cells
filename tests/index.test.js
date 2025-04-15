@@ -1,9 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { Cell, SourceCell } from '../library/index.js';
-
-beforeEach(() => {
-  Cell.removeGlobalEffects();
-});
 
 describe('Cells', () => {
   test('Creates a reactive Cell of type T', () => {
@@ -115,75 +111,6 @@ describe('Effects', () => {
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe('Global Effects', () => {
-  test('Global effects should run on all cells', () => {
-    const callback = vi.fn();
-    Cell.beforeUpdate(callback);
-    const cell = Cell.source(1);
-    expect(callback).toHaveBeenCalledTimes(0);
-
-    cell.value = 2;
-    expect(callback).toHaveBeenCalledTimes(1);
-
-    const derived = Cell.derived(() => cell.value + 1);
-    derived.value; // force update
-    cell.value = 20;
-
-    expect(callback).toHaveBeenCalledTimes(3);
-  });
-
-  test('Global effects set to run once should only run once', () => {
-    const callback = vi.fn();
-    Cell.beforeUpdate(callback, {
-      runOnce: true,
-    });
-    const cell = Cell.source(1);
-    cell.value = 2;
-
-    expect(callback).toHaveBeenCalledTimes(1);
-
-    cell.value = 3;
-    expect(callback).toHaveBeenCalledTimes(1);
-  });
-
-  test('Global effects run before', () => {
-    Cell.beforeUpdate(
-      () => {
-        expect(cell.value).toBe(1);
-        expect(derived.value).toBe(3);
-      },
-      {
-        ignoreDerivedCells: true,
-      }
-    );
-    const cell = Cell.source(1);
-    const derived = Cell.derived(() => cell.value * 3);
-    cell.value = 8;
-  });
-
-  test('Global effects run after', () => {
-    Cell.afterUpdate(() => {
-      expect(cell.value).toBe(2);
-    });
-
-    const cell = Cell.source(1);
-    cell.value = 2;
-  });
-
-  test('Global effects set to ignore derived cells should ignore derived cells', () => {
-    const callback = vi.fn();
-    Cell.beforeUpdate(callback, {
-      ignoreDerivedCells: true,
-    });
-    const cell = Cell.source(1);
-    const derived = Cell.derived(() => cell.value + 1);
-
-    cell.value = 2;
-    expect(callback).toHaveBeenCalledTimes(1);
-    expect(derived.value).toBe(3);
   });
 });
 
@@ -520,6 +447,7 @@ describe('Batched effects', () => {
     expect(derived.value).toEqual(200);
   });
 
+
   test('Nested batched effects should still only run once', () => {
     const callback = vi.fn();
     const cell = Cell.source(2);
@@ -792,4 +720,5 @@ describe('Derived Cells', () => {
     const derived = s.derivedCells;
     expect(derived).toEqual([f]);
   });
+
 });

@@ -72,20 +72,6 @@ count.value = 3; // Output: "Count changed to: 3"
 count.value = 7; // Output: "Count changed to: 7"
 ```
 
-### 4. Global Effects
-
-Cells allows you to set up global effects that run before or after any cell is updated, giving you fine-grained control over your application's reactive behavior.
-
-```javascript
-Cell.beforeUpdate((value) => {
-  console.log(`About to update a cell with value: ${value}`);
-});
-
-Cell.afterUpdate((value) => {
-  console.log(`Just updated a cell with value: ${value}`);
-});
-```
-
 ### 5. Batch Updates
 
 When you need to perform multiple updates but only want to trigger effects once, you can use batch updates to optimize performance:
