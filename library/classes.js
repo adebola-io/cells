@@ -389,32 +389,33 @@ export class Cell {
 
     // Run computed dependents.
     const computedDependents = this.#derivedCells;
-    if (computedDependents !== undefined) {
-      for (const dependent of computedDependents) {
-        // global effects
-        for (const [options, effect] of root.globalPreEffects) {
-          if (options.ignoreDerivedCells) continue;
 
-          effect(this.wvalue);
-        }
+    for (const dependent of computedDependents) {
+      // global effects
+      for (const [options, effect] of root.globalPreEffects) {
+        if (options.ignoreDerivedCells) continue;
+        effect(this.wvalue);
+      }
 
-        const deref = dependent.deref();
-        if (deref === undefined) continue;
+      const deref = dependent.deref();
+      if (deref === undefined) continue;
 
-        const computedCell = deref;
-        const computedFn = deref.computedFn;
+      const computedCell = deref;
+      const computedFn = deref.computedFn;
 
-        if (root.batchNestingLevel > 0) {
-          root.batchedEffects.set(
-            () => computedCell.setValue(computedFn()),
-            []
-          );
-        } else {
+      if (root.batchNestingLevel > 0) {
+        root.batchedEffects.set(() => {
           const newValue = computedFn();
-          const isSameValue = deepEqual(computedCell.value, newValue);
+          const isSameValue = deepEqual(computedCell.wvalue, newValue);
+          if (isSameValue) return;
           computedCell.setValue(newValue);
-          if (isSameValue) continue;
-        }
+          computedCell.update();
+        }, []);
+      } else {
+        const newValue = computedFn();
+        const isSameValue = deepEqual(computedCell.wvalue, newValue);
+        if (isSameValue) continue;
+        computedCell.setValue(newValue);
         computedCell.update();
       }
     }
