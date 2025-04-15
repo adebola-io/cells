@@ -262,6 +262,71 @@ describe('Derived cells', () => {
 
     expect(callback).toHaveBeenCalledTimes(0);
   });
+
+  test('Derived cell should update in the order of dependencies', () => {
+    const source = Cell.source('Hello');
+
+    let string = '';
+    const derived1 = Cell.derived(() => {
+      string += '1';
+      return source.value.length;
+    });
+    const derived2 = Cell.derived(() => {
+      string += '2';
+      return `${source.value} World`;
+    });
+    expect(derived1.value).toBe(5);
+    expect(derived2.value).toBe('Hello World');
+    expect(string).toBe('12');
+
+    source.value = 'Goodbye';
+    expect(derived1.value).toBe(7);
+    expect(derived2.value).toBe('Goodbye World');
+    expect(string).toBe('1212');
+
+    const derived3 = Cell.derived(() => {
+      string += '3';
+      return `${source.value} Universe`;
+    });
+    expect(derived3.value).toBe('Goodbye Universe');
+    expect(string).toBe('12123');
+
+    const derived4 = Cell.derived(() => {
+      string += '4';
+      return derived1.value * 2;
+    });
+    expect(derived4.value).toBe(14);
+
+    const derived5 = Cell.derived(() => {
+      string += '5';
+      return `${derived2.value}${derived2.value}`;
+    });
+    expect(derived5.value).toBe('Goodbye WorldGoodbye World');
+
+    string = '';
+    source.value = 'Welcome!';
+    expect(string).toBe('12345');
+  });
+
+  test('Nested derived cells should only be updated once', () => {
+    const cell = Cell.source(1);
+    const derived = Cell.derived(() => cell.value + 1);
+    const derived2 = Cell.derived(() => cell.value + 3);
+
+    const callback = vi.fn();
+    const derived3 = Cell.derived(() => {
+      callback();
+      return derived.value + derived2.value;
+    });
+
+    expect(derived3.value).toBe(6);
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    cell.value = 2;
+
+    expect(derived3.value).toBe(8);
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('Nested cells', () => {
@@ -447,6 +512,26 @@ describe('Batched effects', () => {
     expect(derived.value).toEqual(200);
   });
 
+  test('Batched derived cells should update once regardless of dependencies', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2);
+    const derived = Cell.derived(() => {
+      return cell1.value + cell2.value;
+    });
+    const callback = vi.fn();
+    derived.listen(callback);
+
+    Cell.batch(() => {
+      cell1.value = 3;
+      cell2.value = 4;
+
+      cell1.value = 5;
+      cell2.value = 6;
+    });
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(derived.value).toBe(11);
+  });
 
   test('Nested batched effects should still only run once', () => {
     const callback = vi.fn();
@@ -721,4 +806,29 @@ describe('Derived Cells', () => {
     expect(derived).toEqual([f]);
   });
 
+  test('derived cells should have dynamic dependencies', () => {
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const cb = vi.fn();
+
+    const c = Cell.derived(() => {
+      cb();
+      if (a.value > 1) {
+        return a.value + b.value;
+      }
+      return a.value;
+    });
+
+    expect(c.value).toEqual(1);
+    expect(cb).toHaveBeenCalledTimes(1);
+    b.value = 10;
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(c.value).toEqual(1); // No change.
+    a.value = 5;
+    expect(cb).toHaveBeenCalledTimes(2);
+    expect(c.value).toEqual(15);
+    b.value = 20;
+    expect(cb).toHaveBeenCalledTimes(3);
+    expect(c.value).toEqual(25);
+  });
 });
