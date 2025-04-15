@@ -166,17 +166,20 @@ export class Cell {
   #effects = [];
 
   /**
-   * @type {Array<WeakRef<DerivedCell<any>>>}
+   * @type {Set<WeakRef<DerivedCell<any>>>}
    */
-  #derivedCells = [];
+  #derivedCells = new Set();
 
   /**
    * @readonly
    * @returns {Array<DerivedCell<any>>}
    */
   get derivedCells() {
-    // @ts-ignore
-    return this.#derivedCells.map((cell) => cell.deref()).filter(Boolean);
+    return /** @type {Array<DerivedCell<any>>} */ (
+      Array.from(this.#derivedCells)
+        .map((cell) => cell.deref())
+        .filter(Boolean)
+    );
   }
 
   /**
@@ -218,17 +221,17 @@ export class Cell {
    * @protected @type {T}
    */
   get revalued() {
-    const currentlyComputedValue = activeComputedValues.at(-1);
+    const currentlyComputedValue =
+      activeComputedValues[activeComputedValues.length - 1];
 
-    if (currentlyComputedValue !== undefined) {
-      const isAlreadySubscribed = this.#derivedCells.some(
-        (ref) => ref.deref() === currentlyComputedValue
-      );
-      if (isAlreadySubscribed) return this.wvalue;
+    if (currentlyComputedValue === undefined) return this.wvalue;
 
-      this.#derivedCells.push(new WeakRef(currentlyComputedValue));
-    }
+    const isAlreadySubscribed = this.#derivedCells.has(
+      currentlyComputedValue.ref
+    );
+    if (isAlreadySubscribed) return this.wvalue;
 
+    this.#derivedCells.add(currentlyComputedValue.ref);
     return this.wvalue;
   }
 
@@ -398,7 +401,10 @@ export class Cell {
       }
 
       const deref = dependent.deref();
-      if (deref === undefined) continue;
+      if (deref === undefined) {
+        computedDependents.delete(dependent);
+        continue;
+      }
 
       const computedCell = deref;
       const computedFn = deref.computedFn;
@@ -406,21 +412,22 @@ export class Cell {
       if (root.batchNestingLevel > 0) {
         root.batchedEffects.set(() => {
           const newValue = computedFn();
-          const isSameValue = deepEqual(computedCell.wvalue, newValue);
+          const isSameValue =
+            !computedCell.initialized ||
+            deepEqual(computedCell.wvalue, newValue);
           if (isSameValue) return;
           computedCell.setValue(newValue);
           computedCell.update();
         }, []);
       } else {
         const newValue = computedFn();
-        const isSameValue = deepEqual(computedCell.wvalue, newValue);
+        const isSameValue =
+          !computedCell.initialized || deepEqual(computedCell.wvalue, newValue);
         if (isSameValue) continue;
         computedCell.setValue(newValue);
         computedCell.update();
       }
     }
-    // Periodically drop dead references.
-    this.#derivedCells = this.#derivedCells.filter((ref) => ref.deref());
 
     // global effects
     for (const [options, effect] of root.globalPostEffects) {
@@ -585,16 +592,25 @@ export class Cell {
    * @returns {T} The flattened value.
    */
   static flatten = (value) => {
-    // @ts-ignore:
-    return value instanceof Cell
-      ? Cell.flatten(value.wvalue)
-      : Array.isArray(value)
-      ? // @ts-ignore:
-        Cell.flattenArray(value)
-      : value instanceof Object
-      ? // @ts-ignore:
-        Cell.flattenObject(value)
-      : value;
+    if (value instanceof Cell) {
+      if (value instanceof DerivedCell) {
+        if (value.initialized) {
+          return Cell.flatten(value.wvalue);
+        }
+        value.setValue(value.computedFn());
+        return Cell.flatten(value.wvalue);
+      }
+      return Cell.flatten(value.wvalue);
+    }
+    if (Array.isArray(value)) {
+      // @ts-ignore:
+      return Cell.flattenArray(value);
+    }
+    if (value instanceof Object) {
+      // @ts-ignore:
+      return Cell.flattenObject(value);
+    }
+    return value;
   };
 
   /**
@@ -716,6 +732,7 @@ export class DerivedCell extends Cell {
    */
   constructor(computedFn) {
     super();
+    this.ref = new WeakRef(this);
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
       activeComputedValues.push(this);
@@ -723,18 +740,53 @@ export class DerivedCell extends Cell {
       activeComputedValues.pop();
       return value;
     };
-    this.setValue(derivationWrapper());
-    this.computedFn = computedFn;
+    this.computedFn = derivationWrapper;
   }
 
   /** @type {() => T} */
   computedFn;
 
+  /** @type {WeakRef<this>} */
+  ref;
+
+  initialized = false;
+
   /**
    * @readonly
    */
   get value() {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.setValue(this.computedFn());
+    }
     return this.revalued;
+  }
+
+  /**
+   * Listens for changes to the cell, initializing the value if not already done.
+   * @param {(newValue: T) => void} callback - The function to call when the cell's value changes.
+   * @param {object} [options] - Optional configuration for listening.
+   */
+  listen(callback, options) {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.setValue(this.computedFn());
+    }
+    return super.listen(callback, options);
+  }
+
+  /**
+   * Runs the callback and sets up a listener, initializing the cell's value if not already done.
+   * @param {(newValue: T) => void} callback - The function to call when the cell's value changes.
+   * @param {object} [options] - Optional configuration for listening and running.
+   * @returns {*} The result of the parent class's runAndListen method.
+   */
+  runAndListen(callback, options) {
+    if (!this.initialized) {
+      this.initialized = true;
+      this.setValue(this.computedFn());
+    }
+    return super.runAndListen(callback, options);
   }
 
   /**

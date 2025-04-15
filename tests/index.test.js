@@ -129,6 +129,7 @@ describe('Global Effects', () => {
     expect(callback).toHaveBeenCalledTimes(1);
 
     const derived = Cell.derived(() => cell.value + 1);
+    derived.value; // force update
     cell.value = 20;
 
     expect(callback).toHaveBeenCalledTimes(3);
@@ -354,10 +355,11 @@ describe('Nested cells', () => {
     const cell = Cell.source({ a: 'hello', b: 1, c: true, d: null });
     const callback = vi.fn();
 
-    Cell.derived(() => {
+    const derived = Cell.derived(() => {
       callback();
       return cell.value.a;
     });
+    expect(derived.value).toBe('hello');
     expect(callback).toHaveBeenCalledTimes(1);
 
     cell.value = { a: 'world', b: 2, c: false, d: null };
@@ -505,6 +507,7 @@ describe('Batched effects', () => {
       callback();
       return cell.value * 2;
     });
+    expect(derived.value).toEqual(4);
 
     Cell.batch(() => {
       cell.value = 80;
@@ -784,6 +787,7 @@ describe('Derived Cells', () => {
   test('derived cells should be available', () => {
     const s = Cell.source(1);
     const f = Cell.derived(() => s.value + 1);
+    expect(f.value).toEqual(2);
 
     const derived = s.derivedCells;
     expect(derived).toEqual([f]);
