@@ -18,4 +18,4 @@ jobs:
       - run: bun install
       - run: bun test
       - run: bun run build
-      - run: bun run previews
+      - run: bun run prepublish

@@ -10,7 +10,8 @@
   "scripts": {
     "test-once": "vitest run",
     "test": "vitest",
-    "build": "tsc --p jsconfig.json"
+    "build": "tsc --p jsconfig.json",
+    "prepublish": "bunx pkg-pr-new publish"
   },
   "exports": {
     ".": {
