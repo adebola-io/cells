@@ -877,7 +877,7 @@ export class SourceCell extends Cell {
       throw new Error('Cannot set the value of an immutable cell.');
     }
 
-    const oldValue = this.wvalue;
+    const oldValue = this.peek();
     const isEqual = this.options?.equals
       ? this.options.equals(oldValue, value)
       : deepEqual(oldValue, value);
@@ -1004,6 +1004,21 @@ function deepEqual(a, b) {
 
     if (a.getTime() !== b.getTime()) {
       return false;
+    }
+  }
+
+  if (a instanceof Map) {
+    if (!(b instanceof Map)) {
+      return false;
+    }
+
+    if (a.size !== b.size) {
+      return false;
+    }
+    for (const [key, value] of a.entries()) {
+      if (!deepEqual(b.get(key), value)) {
+        return false;
+      }
     }
   }
 
