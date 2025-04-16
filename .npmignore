@@ -4,3 +4,5 @@ deno.lock
 bun.lockdb
 jsconfig.json
 tsconfig.json
+library/
+

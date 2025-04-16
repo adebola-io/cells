@@ -12,14 +12,14 @@
     "noImplicitReturns": true,
 
     "noEmit": false,
-    "emitDeclarationOnly": true,
     "declaration": true,
+    "sourceMap": true,
 
     "checkJs": true,
     "strict": true,
 
-    "outDir": "types"
+    "outDir": "dist"
   },
   "include": ["library/**/*", "index.js"],
-  "exclude": ["types/**/*", "tests/**/*"]
+  "exclude": ["types/**/*", "tests/**/*", "dist/**/*"]
 }
