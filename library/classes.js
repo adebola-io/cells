@@ -81,6 +81,9 @@ const derivedCellMap = new WeakMap();
 
 let isUpdating = false;
 
+/** @type {Error[]} */
+const cellErrors = [];
+
 /**
  * Processes and updates cells in the update queue.
  *
@@ -126,6 +129,15 @@ function triggerUpdate() {
   }
   updateBuffer.clear();
   isUpdating = false;
+  throwAnyErrors();
+}
+
+function throwAnyErrors() {
+  if (cellErrors.length > 0) {
+    const errors = [...cellErrors];
+    cellErrors.length = 0;
+    throw new CellUpdateError(errors);
+  }
 }
 
 const mutativeMethods = {
@@ -377,7 +389,13 @@ export class Cell {
   runAndListen(callback, options) {
     const cb = callback;
 
-    cb(this.wvalue);
+    try {
+      cb(this.wvalue);
+    } catch (e) {
+      if (e instanceof Error) {
+        cellErrors.push(e);
+      }
+    }
 
     if (options?.signal?.aborted) {
       return () => {};
@@ -408,6 +426,8 @@ export class Cell {
       if (aPriority === bPriority) return 0;
       return aPriority < bPriority ? 1 : -1;
     });
+
+    throwAnyErrors();
 
     return () => this.ignore(cb);
   }
@@ -455,7 +475,7 @@ export class Cell {
    */
   update() {
     // Run watchers.
-    const wvalue = this.wvalue;
+    const wvalue = this.peek();
     const effects = this.#effects;
     let len = effects.length;
 
@@ -471,7 +491,13 @@ export class Cell {
       if (batchNestingLevel > 0) {
         batchedEffects.set(watcher, wvalue);
       } else {
-        watcher(wvalue);
+        try {
+          watcher(wvalue);
+        } catch (e) {
+          if (e instanceof Error) {
+            cellErrors.push(e);
+          }
+        }
       }
     }
   }
@@ -529,8 +555,18 @@ export class Cell {
    */
   static batch = (callback) => {
     batchNestingLevel++;
-    const value = callback();
+    /** @type {X | undefined} */
+    let value = undefined;
+    let error;
+    try {
+      value = callback();
+    } catch (e) {
+      error = e;
+    }
     batchNestingLevel--;
+    if (error instanceof Error) {
+      cellErrors.push(error);
+    }
     if (batchNestingLevel === 0) {
       for (const [effect, args] of batchedEffects) {
         effect(args);
@@ -538,7 +574,8 @@ export class Cell {
       if (!isUpdating) triggerUpdate();
       batchedEffects = new Map();
     }
-    return value;
+    throwAnyErrors();
+    return /** @type {X} */ (value);
   };
 
   /**
@@ -701,11 +738,16 @@ export class DerivedCell extends Cell {
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
       activeComputedValues.push(this);
-      const value = computedFn();
+      let value = this.wvalue;
+      try {
+        value = computedFn();
+      } catch (e) {
+        if (e instanceof Error) cellErrors.push(e);
+      }
       activeComputedValues.pop();
       return value;
     };
-    this.computedFn = derivationWrapper;
+    this.computedFn = /** @type {() => T} */ (derivationWrapper);
     this.initialized = false;
   }
 
@@ -722,6 +764,7 @@ export class DerivedCell extends Cell {
     if (!this.initialized) {
       this.initialized = true;
       this.setValue(this.computedFn());
+      throwAnyErrors();
     }
     return this.revalued;
   }
@@ -735,6 +778,7 @@ export class DerivedCell extends Cell {
     if (!this.initialized) {
       this.initialized = true;
       this.setValue(this.computedFn());
+      throwAnyErrors();
     }
     return super.listen(callback, options);
   }
@@ -749,6 +793,7 @@ export class DerivedCell extends Cell {
     if (!this.initialized) {
       this.initialized = true;
       this.setValue(this.computedFn());
+      throwAnyErrors();
     }
     return super.runAndListen(callback, options);
   }
@@ -758,6 +803,10 @@ export class DerivedCell extends Cell {
    */
   set value(_) {
     throw new Error('Cannot set a derived Cell value.');
+  }
+
+  deproxy() {
+    throw new Error('Cannot deproxy a derived cell.');
   }
 }
 
@@ -805,6 +854,14 @@ export class SourceCell extends Cell {
       return /** @type {T extends object ? T : never} */ (originalObject);
     }
     throw new Error('Cannot deproxy a non-object cell.');
+  }
+
+  peek() {
+    const originalObject = this.#originalObject;
+    if (typeof originalObject === 'object' && originalObject !== null) {
+      return /** @type {T extends object ? T : never} */ (originalObject);
+    }
+    return this.wvalue;
   }
 
   get value() {
@@ -915,6 +972,14 @@ export class SourceCell extends Cell {
   }
 }
 
+export class CellUpdateError extends Error {
+  /** @param {Error[]} errors */
+  constructor(errors) {
+    super('Errors occurred during cell update cycle');
+    this.errors = errors;
+  }
+}
+
 /**
  * Recursively compares two values for deep equality.
  * @param {any} a - The first value to compare.
@@ -936,6 +1001,7 @@ function deepEqual(a, b) {
     if (!(b instanceof Date)) {
       return false;
     }
+
     if (a.getTime() !== b.getTime()) {
       return false;
     }
