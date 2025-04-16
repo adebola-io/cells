@@ -8,6 +8,7 @@
   "module": "./dist/index.js",
   "typings": "./dist/index.d.ts",
   "scripts": {
+    "test-once": "vitest run",
     "test": "vitest",
     "build": "tsc --p jsconfig.json"
   },
