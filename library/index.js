@@ -1,4 +1,4 @@
-import { DerivedCell, SourceCell, Cell } from './classes.js';
+import { DerivedCell, SourceCell, Cell, CellUpdateError } from './classes.js';
 
 /**
  * Represents a partial map of cells, where each key in the object type `T` is mapped to either a `Cell<T[key]>` or the raw type `T[key]`.
@@ -14,5 +14,5 @@ import { DerivedCell, SourceCell, Cell } from './classes.js';
  * @typedef {{ [key in keyof T]: Cell<T[key]> }} CellMap
  */
 
-export { SourceCell, DerivedCell, Cell };
+export { SourceCell, DerivedCell, Cell, CellUpdateError };
 export default Cell;

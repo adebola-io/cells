@@ -1,6 +1,10 @@
-tests/
+.vscode/
+.github/
+./tests/
+./library/
 deno.json
 deno.lock
 bun.lockdb
 jsconfig.json
 tsconfig.json
+

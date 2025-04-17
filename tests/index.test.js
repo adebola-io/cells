@@ -1,9 +1,5 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi } from 'vitest';
 import { Cell, SourceCell } from '../library/index.js';
-
-beforeEach(() => {
-  Cell.removeGlobalEffects();
-});
 
 describe('Cells', () => {
   test('Creates a reactive Cell of type T', () => {
@@ -58,6 +54,29 @@ describe('Cells', () => {
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(3);
     unsubscribe();
+  });
+
+  test('Creates a reactive Cell with null or undefined', () => {
+    /** @type {SourceCell<any>} */
+    const nullCell = Cell.source(null);
+    expect(nullCell.value).toBeNull();
+    /** @type {SourceCell<any>} */
+    const undefinedCell = Cell.source(undefined);
+    expect(undefinedCell.value).toBeUndefined();
+
+    const callbackNull = vi.fn();
+    nullCell.listen(callbackNull);
+    nullCell.value = 1;
+    expect(callbackNull).toHaveBeenCalledWith(1);
+    nullCell.value = undefined;
+    expect(callbackNull).toHaveBeenCalledWith(undefined);
+
+    const callbackUndefined = vi.fn();
+    undefinedCell.listen(callbackUndefined);
+    undefinedCell.value = 'test';
+    expect(callbackUndefined).toHaveBeenCalledWith('test');
+    undefinedCell.value = null;
+    expect(callbackUndefined).toHaveBeenCalledWith(null);
   });
 });
 
@@ -116,73 +135,26 @@ describe('Effects', () => {
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
   });
-});
 
-describe('Global Effects', () => {
-  test('Global effects should run on all cells', () => {
-    const callback = vi.fn();
-    Cell.beforeUpdate(callback);
+  test('listen should handle errors in callback', () => {
     const cell = Cell.source(1);
-    expect(callback).toHaveBeenCalledTimes(0);
-
-    cell.value = 2;
-    expect(callback).toHaveBeenCalledTimes(1);
-
-    const derived = Cell.derived(() => cell.value + 1);
-    cell.value = 20;
-
-    expect(callback).toHaveBeenCalledTimes(3);
-  });
-
-  test('Global effects set to run once should only run once', () => {
-    const callback = vi.fn();
-    Cell.beforeUpdate(callback, {
-      runOnce: true,
+    const errorCallback = vi.fn(() => {
+      throw new Error('Listener error');
     });
-    const cell = Cell.source(1);
-    cell.value = 2;
+    const normalCallback = vi.fn();
 
-    expect(callback).toHaveBeenCalledTimes(1);
+    cell.listen(errorCallback);
+    cell.listen(normalCallback);
 
-    cell.value = 3;
-    expect(callback).toHaveBeenCalledTimes(1);
-  });
+    expect(() => {
+      cell.value = 2;
+    }).toThrow('Errors occurred during cell update cycle');
 
-  test('Global effects run before', () => {
-    Cell.beforeUpdate(
-      () => {
-        expect(cell.value).toBe(1);
-        expect(derived.value).toBe(3);
-      },
-      {
-        ignoreDerivedCells: true,
-      }
-    );
-    const cell = Cell.source(1);
-    const derived = Cell.derived(() => cell.value * 3);
-    cell.value = 8;
-  });
-
-  test('Global effects run after', () => {
-    Cell.afterUpdate(() => {
-      expect(cell.value).toBe(2);
-    });
-
-    const cell = Cell.source(1);
-    cell.value = 2;
-  });
-
-  test('Global effects set to ignore derived cells should ignore derived cells', () => {
-    const callback = vi.fn();
-    Cell.beforeUpdate(callback, {
-      ignoreDerivedCells: true,
-    });
-    const cell = Cell.source(1);
-    const derived = Cell.derived(() => cell.value + 1);
-
-    cell.value = 2;
-    expect(callback).toHaveBeenCalledTimes(1);
-    expect(derived.value).toBe(3);
+    // Check if the normal callback was still called despite the error in the first one.
+    // Based on the implementation in classes.js, the loop continues, so it should be called.
+    expect(errorCallback).toHaveBeenCalledTimes(1);
+    expect(normalCallback).toHaveBeenCalledTimes(1);
+    expect(normalCallback).toHaveBeenCalledWith(2);
   });
 });
 
@@ -334,6 +306,138 @@ describe('Derived cells', () => {
 
     expect(callback).toHaveBeenCalledTimes(0);
   });
+
+  test('Derived cell should update in the order of dependencies', () => {
+    const source = Cell.source('Hello');
+
+    let string = '';
+    const derived1 = Cell.derived(() => {
+      string += '1';
+      return source.value.length;
+    });
+    const derived2 = Cell.derived(() => {
+      string += '2';
+      return `${source.value} World`;
+    });
+    expect(derived1.value).toBe(5);
+    expect(derived2.value).toBe('Hello World');
+    expect(string).toBe('12');
+
+    source.value = 'Goodbye';
+    expect(derived1.value).toBe(7);
+    expect(derived2.value).toBe('Goodbye World');
+    expect(string).toBe('1212');
+
+    const derived3 = Cell.derived(() => {
+      string += '3';
+      return `${source.value} Universe`;
+    });
+    expect(derived3.value).toBe('Goodbye Universe');
+    expect(string).toBe('12123');
+
+    const derived4 = Cell.derived(() => {
+      string += '4';
+      return derived1.value * 2;
+    });
+    expect(derived4.value).toBe(14);
+
+    const derived5 = Cell.derived(() => {
+      string += '5';
+      return `${derived2.value}${derived2.value}`;
+    });
+    expect(derived5.value).toBe('Goodbye WorldGoodbye World');
+
+    string = '';
+    source.value = 'Welcome!';
+    expect(string).toBe('12345');
+  });
+
+  test('Nested derived cells should only be updated once', () => {
+    const cell = Cell.source(1);
+    const derived = Cell.derived(() => cell.value + 1);
+    const derived2 = Cell.derived(() => cell.value + 3);
+
+    const callback = vi.fn();
+    const derived3 = Cell.derived(() => {
+      callback();
+      return derived.value + derived2.value;
+    });
+
+    expect(derived3.value).toBe(6);
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    cell.value = 2;
+
+    expect(derived3.value).toBe(8);
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
+  test('Derived cell should handle null/undefined results', () => {
+    const cell = Cell.source(0);
+    const derived = Cell.derived(() => (cell.value > 0 ? cell.value : null));
+    expect(derived.value).toBeNull();
+
+    const callback = vi.fn();
+    derived.listen(callback);
+
+    cell.value = 5;
+    expect(derived.value).toBe(5);
+    expect(callback).toHaveBeenCalledWith(5);
+
+    cell.value = -1;
+    expect(derived.value).toBeNull();
+    expect(callback).toHaveBeenCalledWith(null);
+
+    const derivedUndefined = Cell.derived(() =>
+      cell.value > 0 ? cell.value : undefined
+    );
+    expect(derivedUndefined.value).toBeUndefined();
+    const callbackUndefined = vi.fn();
+    derivedUndefined.listen(callbackUndefined);
+
+    cell.value = 10;
+    expect(derivedUndefined.value).toBe(10);
+    expect(callbackUndefined).toHaveBeenCalledWith(10);
+
+    cell.value = 0;
+    expect(derivedUndefined.value).toBeUndefined();
+    expect(callbackUndefined).toHaveBeenCalledWith(undefined);
+  });
+
+  test('derived cell should handle errors in computed function', () => {
+    const source = Cell.source(1);
+    const derived = Cell.derived(() => {
+      if (source.value < 0) {
+        throw new Error('Value cannot be negative');
+      }
+      return source.value * 2;
+    });
+
+    expect(derived.value).toBe(2);
+
+    // Test error during update
+    expect(() => {
+      source.value = -1;
+    }).toThrow('Errors occurred during cell update cycle');
+
+    // Check that the derived value remains the last valid computed value
+    expect(derived.peek()).toBe(2); // Use peek to avoid re-computation triggering error again
+
+    // Reset source to valid state and check if derived cell recovers
+    source.value = 5;
+    expect(derived.value).toBe(10); // Should compute correctly now
+
+    // Test error during initial computation
+    const source2 = Cell.source(-1);
+    expect(() => {
+      Cell.derived(() => {
+        if (source2.value < 0) {
+          throw new Error('Initial value cannot be negative');
+        }
+        return source2.value * 2;
+      }).value; // Access .value to trigger computation
+    }).toThrow('Errors occurred during cell update cycle');
+  });
 });
 
 describe('Nested cells', () => {
@@ -354,10 +458,11 @@ describe('Nested cells', () => {
     const cell = Cell.source({ a: 'hello', b: 1, c: true, d: null });
     const callback = vi.fn();
 
-    Cell.derived(() => {
+    const derived = Cell.derived(() => {
       callback();
       return cell.value.a;
     });
+    expect(derived.value).toBe('hello');
     expect(callback).toHaveBeenCalledTimes(1);
 
     cell.value = { a: 'world', b: 2, c: false, d: null };
@@ -505,6 +610,7 @@ describe('Batched effects', () => {
       callback();
       return cell.value * 2;
     });
+    expect(derived.value).toEqual(4);
 
     Cell.batch(() => {
       cell.value = 80;
@@ -515,6 +621,27 @@ describe('Batched effects', () => {
 
     expect(callback).toHaveBeenCalled();
     expect(derived.value).toEqual(200);
+  });
+
+  test('Batched derived cells should update once regardless of dependencies', () => {
+    const cell1 = Cell.source(1);
+    const cell2 = Cell.source(2);
+    const derived = Cell.derived(() => {
+      return cell1.value + cell2.value;
+    });
+    const callback = vi.fn();
+    derived.listen(callback);
+
+    Cell.batch(() => {
+      cell1.value = 3;
+      cell2.value = 4;
+
+      cell1.value = 5;
+      cell2.value = 6;
+    });
+
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(derived.value).toBe(11);
   });
 
   test('Nested batched effects should still only run once', () => {
@@ -533,6 +660,31 @@ describe('Batched effects', () => {
     });
 
     expect(callback).toHaveBeenCalled();
+  });
+
+  test('Batched effects should handle errors in callback', () => {
+    const cell = Cell.source(1);
+    const listenerCallback = vi.fn();
+    cell.listen(listenerCallback);
+
+    expect(() => {
+      Cell.batch(() => {
+        cell.value = 2;
+        throw new Error('Batch error');
+        // This next line should not be reached
+        // cell.value = 3;
+      });
+    }).toThrow('Errors occurred during cell update cycle');
+
+    // The cell value should reflect the last successful assignment *before* the error.
+    expect(cell.value).toBe(2);
+    // Ensure that listener was still called despite the error in the batch.
+    expect(listenerCallback).toHaveBeenCalledTimes(1);
+
+    // Ensure subsequent updates still work
+    cell.value = 4;
+    expect(listenerCallback).toHaveBeenCalledTimes(2);
+    expect(listenerCallback).toHaveBeenCalledWith(4);
   });
 });
 
@@ -778,14 +930,164 @@ describe('SourceCell deproxy', () => {
       cell.deproxy();
     }).toThrowError('Cannot deproxy a non-object cell.');
   });
+
+  test('should throw an error on deproxy if the cell is derived', () => {
+    const source = new SourceCell(1);
+    const derived = Cell.derived(() => source.value * 2);
+    expect(() => {
+      // Attempting to call deproxy on a derived cell should throw
+      // @ts-ignore - Testing invalid usage
+      derived.deproxy();
+    }).toThrowError('Cannot deproxy a derived cell.');
+  });
 });
 
+// NOTE: This describe block name is duplicated later. Consider renaming one.
 describe('Derived Cells', () => {
   test('derived cells should be available', () => {
     const s = Cell.source(1);
     const f = Cell.derived(() => s.value + 1);
+    expect(f.value).toEqual(2);
 
     const derived = s.derivedCells;
     expect(derived).toEqual([f]);
+  });
+
+  test('derived cells should have dynamic dependencies', () => {
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const cb = vi.fn();
+
+    const c = Cell.derived(() => {
+      cb();
+      if (a.value > 1) {
+        return a.value + b.value;
+      }
+      return a.value;
+    });
+
+    expect(c.value).toEqual(1);
+    expect(cb).toHaveBeenCalledTimes(1);
+    b.value = 10;
+    expect(cb).toHaveBeenCalledTimes(1);
+    expect(c.value).toEqual(1); // No change.
+    a.value = 5;
+    expect(cb).toHaveBeenCalledTimes(2);
+    expect(c.value).toEqual(15);
+    b.value = 20;
+    expect(cb).toHaveBeenCalledTimes(3);
+    expect(c.value).toEqual(25);
+  });
+});
+
+describe('Equality Checks (deepEqual)', () => {
+  test('should correctly compare primitive types', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback);
+
+    cell.value = 1;
+    expect(callback).not.toHaveBeenCalled();
+    cell.value = 2;
+    expect(callback).toHaveBeenCalledTimes(1);
+    cell.value = 2;
+    expect(callback).toHaveBeenCalledTimes(1);
+
+    const strCell = Cell.source('hello');
+    const strCallback = vi.fn();
+    strCell.listen(strCallback);
+    strCell.value = 'hello';
+    expect(strCallback).not.toHaveBeenCalled();
+    strCell.value = 'world';
+    expect(strCallback).toHaveBeenCalledTimes(1);
+  });
+
+  test('should correctly compare dates', () => {
+    const date1 = new Date(2023, 10, 21);
+    const date2 = new Date(2023, 10, 21);
+    const date3 = new Date(2023, 10, 22);
+
+    const cell = Cell.source(date1);
+    const callback = vi.fn();
+    cell.listen(callback);
+
+    cell.value = date2; // Same date value
+    expect(callback).not.toHaveBeenCalled();
+
+    cell.value = date3; // Different date value
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(date3);
+
+    cell.value = date3; // Same date value again
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
+
+  test('should correctly compare simple objects', () => {
+    const obj1 = { a: 1, b: 'test' };
+    const obj2 = { a: 1, b: 'test' };
+    const obj3 = { a: 1, b: 'different' };
+    const obj4 = { a: 2, b: 'test' };
+
+    const cell = Cell.source(obj1);
+    const callback = vi.fn();
+    cell.listen(callback);
+
+    cell.value = obj2; // Structurally same
+    expect(callback).not.toHaveBeenCalled();
+
+    cell.value = obj3; // Different value for 'b'
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(obj3);
+
+    cell.value = obj4; // Different value for 'a'
+    expect(callback).toHaveBeenCalledTimes(2);
+    expect(callback).toHaveBeenCalledWith(obj4);
+
+    cell.value = { ...obj4 }; // Structurally same again
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
+  test('should correctly compare arrays', () => {
+    const arr1 = [1, 2, 3];
+    const arr2 = [1, 2, 3];
+    const arr3 = [1, 2, 4];
+    const arr4 = [1, 2];
+
+    const cell = Cell.source(arr1);
+    const callback = vi.fn();
+    cell.listen(callback);
+
+    cell.value = arr2; // Same content
+    expect(callback).not.toHaveBeenCalled();
+
+    cell.value = arr3; // Different element
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(arr3);
+
+    cell.value = arr4; // Different length
+    expect(callback).toHaveBeenCalledTimes(2);
+    expect(callback).toHaveBeenCalledWith(arr4);
+
+    cell.value = [...arr4]; // Same content again
+    expect(callback).toHaveBeenCalledTimes(2);
+  });
+
+  test('should handle null and undefined comparisons', () => {
+    const cell = /** @type {SourceCell<null | undefined | number>} */ (
+      Cell.source(null)
+    );
+    const callback = vi.fn();
+    cell.listen(callback);
+
+    cell.value = null;
+    expect(callback).not.toHaveBeenCalled();
+    cell.value = undefined;
+    expect(callback).toHaveBeenCalledTimes(1);
+    cell.value = undefined;
+    expect(callback).toHaveBeenCalledTimes(1);
+    cell.value = 0;
+    expect(callback).toHaveBeenCalledTimes(2);
+    cell.value = null;
+    expect(callback).toHaveBeenCalledTimes(3);
   });
 });

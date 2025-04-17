@@ -5,11 +5,19 @@
   "main": "index.js",
   "private": false,
   "type": "module",
-  "module": "./index.js",
-  "typings": "./types/index.d.ts",
+  "module": "./dist/index.js",
+  "typings": "./dist/index.d.ts",
   "scripts": {
+    "test-once": "vitest run",
     "test": "vitest",
-    "types": "tsc --p jsconfig.json"
+    "build": "tsc --p jsconfig.json",
+    "prepublish": "bunx pkg-pr-new publish"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
   "repository": {
     "type": "git",

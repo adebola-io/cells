@@ -1,10 +1,11 @@
 {
   "name": "@adbl/cells",
   "version": "1.0.11",
-  "exports": "./index.js",
+  "exports": "./dist/index.js",
   "publish": {
     "exclude": [
       "**/*.test.js",
+      "library",
       "bun.lockb",
       "package-lock.json",
       "jsconfig.json"
