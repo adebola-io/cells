@@ -125,6 +125,7 @@ function triggerUpdate() {
         }
       }
 
+    //@ts-ignore: Cell.update is protected.
     cell.update();
   }
   updateBuffer.clear();
@@ -319,6 +320,9 @@ export class Cell {
     return this.revalued;
   }
 
+  /**
+   * Gets the current value of the cell.
+   */
   get value() {
     return this.wvalue;
   }
@@ -494,6 +498,7 @@ export class Cell {
   }
 
   /**
+   * @protected
    * Updates the root object and notifies any registered watchers and computed dependents.
    * This method is called whenever the root object's value changes.
    */
