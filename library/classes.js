@@ -366,7 +366,7 @@ export class Cell {
     });
 
     if (!isAlreadySubscribed) {
-      this.#effects.push(new Effect(callback, options));
+      this.#effects.push(new Effect(effect, options));
     }
 
     this.#effects.sort((a, b) => {

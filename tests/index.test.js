@@ -156,6 +156,19 @@ describe('Effects', () => {
     expect(normalCallback).toHaveBeenCalledTimes(1);
     expect(normalCallback).toHaveBeenCalledWith(2);
   });
+
+  test('Listener with { once: true } should only run once', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback, { once: true });
+
+    cell.value = 2;
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(2);
+    cell.value = 3;
+
+    expect(callback).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('Derived cells', () => {
