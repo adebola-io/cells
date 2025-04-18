@@ -1,10 +1,11 @@
 .vscode/
 .github/
-./tests/
-./library/
+tests
+/library
+/index.js
 deno.json
 deno.lock
-bun.lockdb
+bun.lockb
 jsconfig.json
 tsconfig.json
-
+*.tgz

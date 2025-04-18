@@ -1,8 +1,9 @@
 {
   "name": "@adbl/cells",
-  "version": "1.0.11",
+  "version": "1.0.12",
   "exports": "./dist/index.js",
   "publish": {
+    "include": ["dist", "README.md"],
     "exclude": [
       "**/*.test.js",
       "library",
