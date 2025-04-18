@@ -250,13 +250,37 @@ class Effect {
 }
 
 /**
- * @template {*} T
+ * @template {*} T The type of value stored in the cell
+ *
+ * Base class for reactive cells.
+ * This class should not be instantiated directly - use `Cell.source` or
+ * `Cell.derived` instead.
+ *
+ * @example
+ * ```typescript
+ * // Create a source cell
+ * const count = Cell.source(0);
+ *
+ * // Listen to changes
+ * count.listen(value => console.log('Count changed:', value));
+ *
+ * // Update the value
+ * count.value = 1; // Logs: Count changed: 1
+ * ```
  */
 export class Cell {
   /**
    * @type {Array<Effect<T>>}
    */
   #effects = [];
+
+  constructor() {
+    if (new.target === Cell) {
+      throw new Error(
+        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.'
+      );
+    }
+  }
 
   /**
    * @readonly
@@ -813,6 +837,23 @@ export class DerivedCell extends Cell {
 /**
  * @template {*} T
  * @extends {Cell<T>}
+ * A cell whose value can be directly modified.
+ * Source cells are the primary way to introduce reactivity.
+ * They can hold any value type and will automatically handle proxying of objects
+ * to enable deep reactivity when needed.
+ *
+ * @example
+ * ```typescript
+ * const count = Cell.source(0);
+ * ```
+ *
+ * @example
+ * ```typescript
+ * // With options
+ * const immutableCell = Cell.source(42, { immutable: true });
+ * // Will throw error:
+ * immutableCell.value = 43;
+ * ```
  */
 export class SourceCell extends Cell {
   /** @type {object | undefined} */
@@ -972,6 +1013,22 @@ export class SourceCell extends Cell {
   }
 }
 
+/**
+ * An error class that aggregates multiple errors thrown during a cell update cycle.
+ *
+ * This error is thrown when one or more errors are encountered while updating cells,
+ * such as when running effect callbacks or computed updates. The `errors` property
+ * contains an array of all the errors that occurred during the update cycle.
+ *
+ * @example
+ * try {
+ *   // Some cell update logic that may throw
+ * } catch (e) {
+ *   if (e instanceof CellUpdateError) {
+ *     console.error('Multiple errors occurred:', e.errors);
+ *   }
+ * }
+ */
 export class CellUpdateError extends Error {
   /** @param {Error[]} errors */
   constructor(errors) {
