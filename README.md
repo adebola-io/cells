@@ -80,9 +80,12 @@ When you need to perform multiple updates but only want to trigger effects once,
 const cell1 = Cell.source(0);
 const cell2 = Cell.source(0);
 
-Cell.afterUpdate(() => {
+const callback = () => {
   console.log('Update occurred');
-});
+};
+
+cell1.listen(callback);
+cell2.listen(callback);
 
 Cell.batch(() => {
   cell1.set(1);
