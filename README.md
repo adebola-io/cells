@@ -37,10 +37,10 @@ Source cells are the building blocks of your reactive state. They hold values th
 import { Cell } from '@adbl/cells';
 
 const count = Cell.source(0);
-console.log(count.value); // Output: 0
+console.log(count.get()); // Output: 0
 
-count.value = 5;
-console.log(count.value); // Output: 5
+count.set(5);
+console.log(count.get()); // Output: 5
 ```
 
 ### 2. Derived Cells
@@ -51,10 +51,10 @@ Derived cells allow you to create computed values based on other cells. They upd
 const count = Cell.source(0);
 const doubledCount = Cell.derived(() => count.value * 2);
 
-console.log(doubledCount.value); // Output: 0
+console.log(doubledCount.get()); // Output: 0
 
-count.value = 5;
-console.log(doubledCount.value); // Output: 10
+count.set(5);
+console.log(doubledCount.get()); // Output: 10
 ```
 
 ### 3. Reactive Effects
@@ -68,8 +68,8 @@ count.listen((newValue) => {
   console.log(`Count changed to: ${newValue}`);
 });
 
-count.value = 3; // Output: "Count changed to: 3"
-count.value = 7; // Output: "Count changed to: 7"
+count.set(3); // Output: "Count changed to: 3"
+count.set(7); // Output: "Count changed to: 7"
 ```
 
 ### 5. Batch Updates
@@ -85,8 +85,8 @@ Cell.afterUpdate(() => {
 });
 
 Cell.batch(() => {
-  cell1.value = 1;
-  cell2.value = 2;
+  cell1.set(1);
+  cell2.set(2);
 });
 // Output: "Update occurred" (only once)
 ```

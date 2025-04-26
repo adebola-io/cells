@@ -4,14 +4,14 @@ import { Cell, SourceCell } from '../library/index.js';
 describe('Cells', () => {
   test('Creates a reactive Cell of type T', () => {
     const cell = Cell.source(1);
-    expect(cell.value).toBe(1);
+    expect(cell.get()).toBe(1);
   });
 
   test('Cell should be reactive', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
     cell.listen(callback);
-    cell.value = 2;
+    cell.set(2);
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(2);
   });
@@ -27,55 +27,45 @@ describe('Cells', () => {
     const callback = vi.fn();
     cell.listen(callback);
 
-    cell.value = {
+    cell.set({
       a: 1,
       b: { c: 2, d: 3 },
-    };
+    });
     expect(callback).toHaveBeenCalledTimes(0);
 
-    cell.value = {
+    cell.set({
       a: 1,
       b: { c: 2, d: 4 },
-    };
+    });
     expect(callback).toHaveBeenCalledTimes(1);
 
-    cell.value.b.c = 2;
+    cell.get().b.c = 2;
     expect(callback).toHaveBeenCalledTimes(1);
 
-    cell.value.b.c = 67;
+    cell.get().b.c = 67;
     expect(callback).toHaveBeenCalledTimes(2);
-  });
-
-  test('Cell should handle built-in operators', () => {
-    const cell = Cell.source(1);
-    const callback = vi.fn();
-    const unsubscribe = cell.listen(callback);
-    cell.value += 2;
-    expect(callback).toHaveBeenCalledTimes(1);
-    expect(callback).toHaveBeenCalledWith(3);
-    unsubscribe();
   });
 
   test('Creates a reactive Cell with null or undefined', () => {
     /** @type {SourceCell<any>} */
     const nullCell = Cell.source(null);
-    expect(nullCell.value).toBeNull();
+    expect(nullCell.get()).toBeNull();
     /** @type {SourceCell<any>} */
     const undefinedCell = Cell.source(undefined);
-    expect(undefinedCell.value).toBeUndefined();
+    expect(undefinedCell.get()).toBeUndefined();
 
     const callbackNull = vi.fn();
     nullCell.listen(callbackNull);
-    nullCell.value = 1;
+    nullCell.set(1);
     expect(callbackNull).toHaveBeenCalledWith(1);
-    nullCell.value = undefined;
+    nullCell.set(undefined);
     expect(callbackNull).toHaveBeenCalledWith(undefined);
 
     const callbackUndefined = vi.fn();
     undefinedCell.listen(callbackUndefined);
-    undefinedCell.value = 'test';
+    undefinedCell.set('test');
     expect(callbackUndefined).toHaveBeenCalledWith('test');
-    undefinedCell.value = null;
+    undefinedCell.set(null);
     expect(callbackUndefined).toHaveBeenCalledWith(null);
   });
 });
@@ -87,13 +77,13 @@ describe('Effects', () => {
     const callback2 = vi.fn();
     const unsubscribe1 = cell.listen(callback1);
     const unsubscribe2 = cell.listen(callback2);
-    cell.value = 2;
+    cell.set(2);
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback1).toHaveBeenCalledWith(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledWith(2);
     unsubscribe1();
-    cell.value = 3;
+    cell.set(3);
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledWith(3);
@@ -104,10 +94,10 @@ describe('Effects', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
     const unsubscribe = cell.listen(callback);
-    cell.value = 2;
+    cell.set(2);
     expect(callback).toHaveBeenCalledTimes(1);
     unsubscribe();
-    cell.value = 3;
+    cell.set(3);
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -119,18 +109,18 @@ describe('Effects', () => {
     const unsubscribe1 = cell.listen(callback1);
     const unsubscribe2 = cell.listen(callback2);
     const unsubscribe3 = cell.listen(callback3);
-    cell.value = 2;
+    cell.set(2);
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(1);
     unsubscribe2();
-    cell.value = 3;
+    cell.set(3);
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
     unsubscribe1();
     unsubscribe3();
-    cell.value = 4;
+    cell.set(4);
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
@@ -147,11 +137,10 @@ describe('Effects', () => {
     cell.listen(normalCallback);
 
     expect(() => {
-      cell.value = 2;
+      cell.set(2);
     }).toThrow('Errors occurred during cell update cycle');
 
     // Check if the normal callback was still called despite the error in the first one.
-    // Based on the implementation in classes.js, the loop continues, so it should be called.
     expect(errorCallback).toHaveBeenCalledTimes(1);
     expect(normalCallback).toHaveBeenCalledTimes(1);
     expect(normalCallback).toHaveBeenCalledWith(2);
@@ -162,10 +151,10 @@ describe('Effects', () => {
     const callback = vi.fn();
     cell.listen(callback, { once: true });
 
-    cell.value = 2;
+    cell.set(2);
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(2);
-    cell.value = 3;
+    cell.set(3);
 
     expect(callback).toHaveBeenCalledTimes(1);
   });
@@ -175,56 +164,56 @@ describe('Derived cells', () => {
   test('Creates a reactive Derived cell of type T', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2);
-    const derived = Cell.derived(() => cell1.value + cell2.value);
-    expect(derived.value).toBe(3);
+    const derived = Cell.derived(() => cell1.get() + cell2.get());
+    expect(derived.get()).toBe(3);
   });
 
   test('Derived cell objects should be reactive', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2);
     const derived = Cell.derived(() => ({
-      a: cell1.value + cell2.value,
+      a: cell1.get() + cell2.get(),
     }));
-    const a = Cell.derived(() => derived.value.a);
-    expect(derived.value).toEqual({ a: 3 });
+    const a = Cell.derived(() => derived.get().a);
+    expect(derived.get()).toEqual({ a: 3 });
 
-    cell1.value = 3;
-    expect(a.value).toEqual(5);
+    cell1.set(3);
+    expect(a.get()).toEqual(5);
   });
 
   test('Derived cell should be reactive', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2);
-    const derived = Cell.derived(() => cell1.value + cell2.value);
+    const derived = Cell.derived(() => cell1.get() + cell2.get());
     const callback = vi.fn();
     derived.listen(callback);
-    cell1.value = 3;
+    cell1.set(3);
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(5);
 
     const name = Cell.source('John');
     const surname = Cell.source('Smith');
-    const fullname = Cell.derived(() => `${name.value} ${surname.value}`);
-    expect(fullname.value).toBe('John Smith');
+    const fullname = Cell.derived(() => `${name.get()} ${surname.get()}`);
+    expect(fullname.get()).toBe('John Smith');
 
-    name.value = 'Jane';
-    expect(fullname.value).toBe('Jane Smith');
+    name.set('Jane');
+    expect(fullname.get()).toBe('Jane Smith');
   });
 
   test('Derived cell should handle multiple dependencies', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2);
     const cell3 = Cell.source(3);
-    const derived = Cell.derived(() => cell1.value + cell2.value + cell3.value);
+    const derived = Cell.derived(() => cell1.get() + cell2.get() + cell3.get());
     const callback = vi.fn();
     derived.listen(callback);
-    cell1.value = 4;
+    cell1.set(4);
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(9);
-    cell2.value = 5;
+    cell2.set(5);
     expect(callback).toHaveBeenCalledTimes(2);
     expect(callback).toHaveBeenCalledWith(12);
-    cell3.value = 6;
+    cell3.set(6);
     expect(callback).toHaveBeenCalledTimes(3);
     expect(callback).toHaveBeenCalledWith(15);
   });
@@ -234,24 +223,24 @@ describe('Derived cells', () => {
     const callback = vi.fn();
     cell.listen(callback);
 
-    const derived1 = Cell.derived(() => cell.value + cell.value);
-    expect(derived1.value).toBe(2);
+    const derived1 = Cell.derived(() => cell.get() + cell.get());
+    expect(derived1.get()).toBe(2);
 
-    cell.value = 3;
+    cell.set(3);
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
   test('Derived cell should handle nested dependencies', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2);
-    const derived1 = Cell.derived(() => cell1.value + cell2.value);
-    const derived2 = Cell.derived(() => derived1.value * 2);
+    const derived1 = Cell.derived(() => cell1.get() + cell2.get());
+    const derived2 = Cell.derived(() => derived1.get() * 2);
     const callback = vi.fn();
     derived2.listen(callback);
-    cell1.value = 3;
+    cell1.set(3);
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(10);
-    cell2.value = 4;
+    cell2.set(4);
     expect(callback).toHaveBeenCalledTimes(2);
     expect(callback).toHaveBeenCalledWith(14);
   });
@@ -259,17 +248,17 @@ describe('Derived cells', () => {
   test('Derived cell should handle circular dependencies', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2); // 4
-    const derived1 = Cell.derived(() => cell2.value + 1);
-    const derived2 = Cell.derived(() => derived1.value + cell1.value);
+    const derived1 = Cell.derived(() => cell2.get() + 1);
+    const derived2 = Cell.derived(() => derived1.get() + cell1.get());
 
-    cell2.value = derived2.value;
-    expect(cell2.value).toBe(4);
-    expect(derived2.value).toBe(6);
+    cell2.set(derived2.get());
+    expect(cell2.get()).toBe(4);
+    expect(derived2.get()).toBe(6);
 
     const callback = vi.fn();
     derived2.listen(callback);
 
-    cell1.value = 3;
+    cell1.set(3);
 
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(8);
@@ -278,25 +267,25 @@ describe('Derived cells', () => {
   test('Derived cell should handle multiple subscriptions and unsubscriptions', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2);
-    const derived = Cell.derived(() => cell1.value + cell2.value);
+    const derived = Cell.derived(() => cell1.get() + cell2.get());
     const callback1 = vi.fn();
     const callback2 = vi.fn();
     const callback3 = vi.fn();
     const unsubscribe1 = derived.listen(callback1);
     const unsubscribe2 = derived.listen(callback2);
     const unsubscribe3 = derived.listen(callback3);
-    cell1.value = 3;
+    cell1.set(3);
     expect(callback1).toHaveBeenCalledTimes(1);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(1);
     unsubscribe2();
-    cell2.value = 4;
+    cell2.set(4);
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
     unsubscribe1();
     unsubscribe3();
-    cell1.value = 5;
+    cell1.set(5);
     expect(callback1).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledTimes(1);
     expect(callback3).toHaveBeenCalledTimes(2);
@@ -307,15 +296,15 @@ describe('Derived cells', () => {
     const callback = vi.fn();
 
     const derived = Cell.derived(() => {
-      return cell.value.length;
+      return cell.get().length;
     });
-    expect(derived.value).toBe(5);
+    expect(derived.get()).toBe(5);
 
     derived.listen(callback);
 
-    cell.value = 'world';
+    cell.set('world');
 
-    expect(derived.value).toBe(5);
+    expect(derived.get()).toBe(5);
 
     expect(callback).toHaveBeenCalledTimes(0);
   });
@@ -326,129 +315,129 @@ describe('Derived cells', () => {
     let string = '';
     const derived1 = Cell.derived(() => {
       string += '1';
-      return source.value.length;
+      return source.get().length;
     });
     const derived2 = Cell.derived(() => {
       string += '2';
-      return `${source.value} World`;
+      return `${source.get()} World`;
     });
-    expect(derived1.value).toBe(5);
-    expect(derived2.value).toBe('Hello World');
+    expect(derived1.get()).toBe(5);
+    expect(derived2.get()).toBe('Hello World');
     expect(string).toBe('12');
 
-    source.value = 'Goodbye';
-    expect(derived1.value).toBe(7);
-    expect(derived2.value).toBe('Goodbye World');
+    source.set('Goodbye');
+    expect(derived1.get()).toBe(7);
+    expect(derived2.get()).toBe('Goodbye World');
     expect(string).toBe('1212');
 
     const derived3 = Cell.derived(() => {
       string += '3';
-      return `${source.value} Universe`;
+      return `${source.get()} Universe`;
     });
-    expect(derived3.value).toBe('Goodbye Universe');
+    expect(derived3.get()).toBe('Goodbye Universe');
     expect(string).toBe('12123');
 
     const derived4 = Cell.derived(() => {
       string += '4';
-      return derived1.value * 2;
+      return derived1.get() * 2;
     });
-    expect(derived4.value).toBe(14);
+    expect(derived4.get()).toBe(14);
 
     const derived5 = Cell.derived(() => {
       string += '5';
-      return `${derived2.value}${derived2.value}`;
+      return `${derived2.get()}${derived2.get()}`;
     });
-    expect(derived5.value).toBe('Goodbye WorldGoodbye World');
+    expect(derived5.get()).toBe('Goodbye WorldGoodbye World');
 
     string = '';
-    source.value = 'Welcome!';
+    source.set('Welcome!');
     expect(string).toBe('12345');
   });
 
   test('Nested derived cells should only be updated once', () => {
     const cell = Cell.source(1);
-    const derived = Cell.derived(() => cell.value + 1);
-    const derived2 = Cell.derived(() => cell.value + 3);
+    const derived = Cell.derived(() => cell.get() + 1);
+    const derived2 = Cell.derived(() => cell.get() + 3);
 
     const callback = vi.fn();
     const derived3 = Cell.derived(() => {
       callback();
-      return derived.value + derived2.value;
+      return derived.get() + derived2.get();
     });
 
-    expect(derived3.value).toBe(6);
+    expect(derived3.get()).toBe(6);
     expect(callback).toHaveBeenCalledTimes(1);
 
-    cell.value = 2;
+    cell.set(2);
 
-    expect(derived3.value).toBe(8);
+    expect(derived3.get()).toBe(8);
     expect(callback).toHaveBeenCalledTimes(2);
   });
 
   test('Derived cell should handle null/undefined results', () => {
     const cell = Cell.source(0);
-    const derived = Cell.derived(() => (cell.value > 0 ? cell.value : null));
-    expect(derived.value).toBeNull();
+    const derived = Cell.derived(() => (cell.get() > 0 ? cell.get() : null));
+    expect(derived.get()).toBeNull();
 
     const callback = vi.fn();
     derived.listen(callback);
 
-    cell.value = 5;
-    expect(derived.value).toBe(5);
+    cell.set(5);
+    expect(derived.get()).toBe(5);
     expect(callback).toHaveBeenCalledWith(5);
 
-    cell.value = -1;
-    expect(derived.value).toBeNull();
+    cell.set(-1);
+    expect(derived.get()).toBeNull();
     expect(callback).toHaveBeenCalledWith(null);
 
     const derivedUndefined = Cell.derived(() =>
-      cell.value > 0 ? cell.value : undefined
+      cell.get() > 0 ? cell.get() : undefined
     );
-    expect(derivedUndefined.value).toBeUndefined();
+    expect(derivedUndefined.get()).toBeUndefined();
     const callbackUndefined = vi.fn();
     derivedUndefined.listen(callbackUndefined);
 
-    cell.value = 10;
-    expect(derivedUndefined.value).toBe(10);
+    cell.set(10);
+    expect(derivedUndefined.get()).toBe(10);
     expect(callbackUndefined).toHaveBeenCalledWith(10);
 
-    cell.value = 0;
-    expect(derivedUndefined.value).toBeUndefined();
+    cell.set(0);
+    expect(derivedUndefined.get()).toBeUndefined();
     expect(callbackUndefined).toHaveBeenCalledWith(undefined);
   });
 
   test('derived cell should handle errors in computed function', () => {
     const source = Cell.source(1);
     const derived = Cell.derived(() => {
-      if (source.value < 0) {
+      if (source.get() < 0) {
         throw new Error('Value cannot be negative');
       }
-      return source.value * 2;
+      return source.get() * 2;
     });
 
-    expect(derived.value).toBe(2);
+    expect(derived.get()).toBe(2);
 
     // Test error during update
     expect(() => {
-      source.value = -1;
+      source.set(-1);
     }).toThrow('Errors occurred during cell update cycle');
 
     // Check that the derived value remains the last valid computed value
     expect(derived.peek()).toBe(2); // Use peek to avoid re-computation triggering error again
 
     // Reset source to valid state and check if derived cell recovers
-    source.value = 5;
-    expect(derived.value).toBe(10); // Should compute correctly now
+    source.set(5);
+    expect(derived.get()).toBe(10); // Should compute correctly now
 
     // Test error during initial computation
     const source2 = Cell.source(-1);
     expect(() => {
       Cell.derived(() => {
-        if (source2.value < 0) {
+        if (source2.get() < 0) {
           throw new Error('Initial value cannot be negative');
         }
-        return source2.value * 2;
-      }).value; // Access .value to trigger computation
+        return source2.get() * 2;
+      }).get(); // Access .get() to trigger computation
     }).toThrow('Errors occurred during cell update cycle');
   });
 });
@@ -458,13 +447,14 @@ describe('Nested cells', () => {
     const cell = Cell.source({ a: 1 });
     const cell2 = Cell.source({ b: 10 });
 
-    const derived = Cell.derived(() => cell.value.a + cell2.value.b);
+    const derived = Cell.derived(() => cell.get().a + cell2.get().b);
 
-    cell.value.a = 2;
-    expect(derived.value).toBe(12);
+    cell.get().a = 2; // Deep reactivity test
+    expect(derived.get()).toBe(12);
 
-    cell2.value.b = 20;
-    expect(derived.value).toBe(22);
+    cell2.get().b = 20; // Deep reactivity test
+    console.log('Changed to ', cell2.get(), cell.get(), derived.get());
+    expect(derived.get()).toBe(22);
   });
 
   test('Derived cell of object type should run callback when value changes', () => {
@@ -473,24 +463,25 @@ describe('Nested cells', () => {
 
     const derived = Cell.derived(() => {
       callback();
-      return cell.value.a;
+      return cell.get().a;
     });
-    expect(derived.value).toBe('hello');
+    expect(derived.get()).toBe('hello');
     expect(callback).toHaveBeenCalledTimes(1);
 
-    cell.value = { a: 'world', b: 2, c: false, d: null };
+    cell.set({ a: 'world', b: 2, c: false, d: null });
     expect(callback).toHaveBeenCalledTimes(2);
   });
 
   test('Cell of map type should be able to read entries', () => {
     const cell = Cell.source(new Map());
-    cell.value.set('a', 1);
-    cell.value.set('b', 2);
+    cell.get().set('a', 1);
+    cell.get().set('b', 2);
 
-    const array = Cell.derived(() => Array.from(cell.value.entries()));
+    const array = Cell.derived(() => Array.from(cell.get().entries()));
 
-    cell.value.set('c', 3);
-    expect(array.value).toEqual([
+    cell.get().set('c', 3);
+
+    expect(array.get()).toEqual([
       ['a', 1],
       ['b', 2],
       ['c', 3],
@@ -500,61 +491,62 @@ describe('Nested cells', () => {
   test('Cell of array type should be reactive', () => {
     const cell = Cell.source([1, 2, 3]);
 
-    const sum = Cell.derived(() => cell.value.reduce((a, b) => a + b, 0));
-    expect(sum.value).toBe(6);
+    console.log(cell.get());
+    const sum = Cell.derived(() => cell.get().reduce((a, b) => a + b, 0));
+    expect(sum.get()).toBe(6);
 
-    cell.value[0] = 3;
-    expect(sum.value).toBe(8);
+    cell.get()[0] = 3; // Deep reactivity test
+    expect(sum.get()).toBe(8);
 
-    cell.value.push(4);
-    expect(sum.value).toBe(12);
+    cell.get().push(4); // Deep reactivity test
+    expect(sum.get()).toBe(12);
 
-    cell.value.pop();
-    expect(sum.value).toBe(8);
+    cell.get().pop(); // Deep reactivity test
+    expect(sum.get()).toBe(8);
   });
 
   test('Cell of nested array type should be reactive', () => {
     /** @type {SourceCell<[number, [number, number], number]>} */
     const cell = Cell.source([1, [2, 3], 4], { deep: true });
-    const d1 = Cell.derived(() => cell.value[1][1] + 2);
-    const d2 = Cell.derived(() => cell.value[1][0] + d1.value);
+    const d1 = Cell.derived(() => cell.get()[1][1] + 2);
+    const d2 = Cell.derived(() => cell.get()[1][0] + d1.get());
 
-    expect(d1.value).toBe(5);
-    expect(d2.value).toBe(7);
-    cell.value[1][1] = 5;
+    expect(d1.get()).toBe(5);
+    expect(d2.get()).toBe(7);
+    cell.get()[1][1] = 5; // Deep reactivity test
 
-    expect(d1.value).toBe(7);
-    expect(d2.value).toBe(9);
+    expect(d1.get()).toBe(7);
+    expect(d2.get()).toBe(9);
   });
 
   test('Cells of maps should be reactive', () => {
     const cell = Cell.source(new Map());
-    const derived = Cell.derived(() => cell.value.get('a'));
+    const derived = Cell.derived(() => cell.get().get('a'));
 
-    expect(derived.value).toBe(undefined);
+    expect(derived.get()).toBe(undefined);
 
-    cell.value.set('a', 1);
-    expect(derived.value).toBe(1);
+    cell.get().set('a', 1); // Deep reactivity test
+    expect(derived.get()).toBe(1);
 
-    cell.value.set('a', 2);
-    expect(derived.value).toBe(2);
+    cell.get().set('a', 2); // Deep reactivity test
+    expect(derived.get()).toBe(2);
   });
 
   test('Cells of sets should be reactive', () => {
     const cell = Cell.source(new Set());
-    const derived = Cell.derived(() => cell.value.has(1));
-    const size = Cell.derived(() => cell.value.size);
+    const derived = Cell.derived(() => cell.get().has(1));
+    const size = Cell.derived(() => cell.get().size);
 
-    expect(derived.value).toBe(false);
-    expect(size.value).toBe(0);
+    expect(derived.get()).toBe(false);
+    expect(size.get()).toBe(0);
 
-    cell.value.add(1);
-    expect(derived.value).toBe(true);
-    expect(size.value).toBe(1);
+    cell.get().add(1); // Deep reactivity test
+    expect(derived.get()).toBe(true);
+    expect(size.get()).toBe(1);
 
-    cell.value.add(2);
-    expect(derived.value).toBe(true);
-    expect(size.value).toBe(2);
+    cell.get().add(2); // Deep reactivity test
+    expect(derived.get()).toBe(true);
+    expect(size.get()).toBe(2);
   });
 
   test('Cells of dates should be reactive', () => {
@@ -562,41 +554,43 @@ describe('Nested cells', () => {
     const callback = vi.fn();
     cell.listen(callback);
 
-    cell.value = new Date(2022, 1, 1);
+    cell.set(new Date(2022, 1, 1));
     expect(callback).toHaveBeenCalledTimes(1);
-    cell.value = new Date(2022, 1, 1);
+    cell.set(new Date(2022, 1, 1));
     expect(callback).toHaveBeenCalledTimes(1);
 
-    cell.value.setMonth(2);
+    cell.get().setMonth(2);
     expect(callback).toHaveBeenCalledTimes(2);
   });
 
   test('Cell should handle built-in operators on objects', () => {
     const cell = Cell.source({ a: 1, b: 2 });
-    const derived = Cell.derived(() => cell.value.a + cell.value.b);
+    const derived = Cell.derived(() => cell.get().a + cell.get().b);
 
-    cell.value.a += 2;
-    expect(derived.value).toBe(5);
+    cell.get().a += 2;
+    expect(derived.get()).toBe(5);
 
-    cell.value.b += 2;
-    expect(derived.value).toBe(7);
+    cell.get().b += 2;
+    expect(derived.get()).toBe(7);
 
-    cell.value.a++;
-    expect(derived.value).toBe(8);
+    cell.get().a++;
+    expect(derived.get()).toBe(8);
 
-    cell.value.b--;
-    expect(derived.value).toBe(7);
+    cell.get().b--;
+    expect(derived.get()).toBe(7);
   });
 
   test('Cell should handle built-in operators on arrays', () => {
     const cell = Cell.source([1, 2, 3]);
-    const derived = Cell.derived(() => cell.value.map((x) => x + 5));
+    const derived = Cell.derived(() => {
+      return cell.get().map((x) => x + 5);
+    });
 
-    expect(derived.value).toEqual([6, 7, 8]);
+    expect(derived.get()).toEqual([6, 7, 8]);
 
-    cell.value[0]++;
+    cell.get()[0]++;
 
-    expect(derived.value).toEqual([7, 7, 8]);
+    expect(derived.get()).toEqual([7, 7, 8]);
   });
 });
 
@@ -608,8 +602,8 @@ describe('Batched effects', () => {
     cell.listen(callback);
 
     Cell.batch(() => {
-      cell.value = 2;
-      cell.value = 3;
+      cell.set(2);
+      cell.set(3);
     });
 
     expect(callback).toHaveBeenCalledTimes(1);
@@ -621,40 +615,40 @@ describe('Batched effects', () => {
     const cell = Cell.source(2);
     const derived = Cell.derived(() => {
       callback();
-      return cell.value * 2;
+      return cell.get() * 2;
     });
-    expect(derived.value).toEqual(4);
+    expect(derived.get()).toEqual(4);
 
     Cell.batch(() => {
-      cell.value = 80;
-      cell.value = 100;
+      cell.set(80);
+      cell.set(100);
 
-      expect(derived.value).toEqual(4);
+      expect(derived.get()).toEqual(4);
     });
 
     expect(callback).toHaveBeenCalled();
-    expect(derived.value).toEqual(200);
+    expect(derived.get()).toEqual(200);
   });
 
   test('Batched derived cells should update once regardless of dependencies', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2);
     const derived = Cell.derived(() => {
-      return cell1.value + cell2.value;
+      return cell1.get() + cell2.get();
     });
     const callback = vi.fn();
     derived.listen(callback);
 
     Cell.batch(() => {
-      cell1.value = 3;
-      cell2.value = 4;
+      cell1.set(3);
+      cell2.set(4);
 
-      cell1.value = 5;
-      cell2.value = 6;
+      cell1.set(5);
+      cell2.set(6);
     });
 
     expect(callback).toHaveBeenCalledTimes(1);
-    expect(derived.value).toBe(11);
+    expect(derived.get()).toBe(11);
   });
 
   test('Nested batched effects should still only run once', () => {
@@ -663,12 +657,12 @@ describe('Batched effects', () => {
     cell.listen(callback);
 
     Cell.batch(() => {
-      cell.value = 100;
-      cell.value = 90;
+      cell.set(100);
+      cell.set(90);
 
       Cell.batch(() => {
-        cell.value = 10;
-        cell.value = 1;
+        cell.set(10);
+        cell.set(1);
       });
     });
 
@@ -682,20 +676,20 @@ describe('Batched effects', () => {
 
     expect(() => {
       Cell.batch(() => {
-        cell.value = 2;
+        cell.set(2);
         throw new Error('Batch error');
         // This next line should not be reached
-        // cell.value = 3;
+        // cell.set(3);
       });
     }).toThrow('Errors occurred during cell update cycle');
 
     // The cell value should reflect the last successful assignment *before* the error.
-    expect(cell.value).toBe(2);
+    expect(cell.get()).toBe(2);
     // Ensure that listener was still called despite the error in the batch.
     expect(listenerCallback).toHaveBeenCalledTimes(1);
 
     // Ensure subsequent updates still work
-    cell.value = 4;
+    cell.set(4);
     expect(listenerCallback).toHaveBeenCalledTimes(2);
     expect(listenerCallback).toHaveBeenCalledWith(4);
   });
@@ -713,8 +707,8 @@ describe('Immediate effects', () => {
     const callback = vi.fn();
     const cell = Cell.source(1);
     cell.runAndListen(callback, { once: true });
-    cell.value = 2;
-    cell.value = 3;
+    cell.set(2);
+    cell.set(3);
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -725,7 +719,7 @@ describe('Immediate effects', () => {
     const signal = abortController.signal;
     cell.runAndListen(callback, { signal });
     abortController.abort();
-    cell.value = 2; // This should not trigger the callback
+    cell.set(2); // This should not trigger the callback
     expect(callback).toHaveBeenCalledTimes(1);
   });
 });
@@ -745,7 +739,7 @@ describe('Flattening', () => {
 
   test('Flattening should work with nested derived cells', () => {
     const cell = Cell.source(Cell.source(1));
-    const value = Cell.flatten(Cell.derived(() => cell.value));
+    const value = Cell.flatten(Cell.derived(() => cell.get()));
     expect(value).toBe(1);
   });
 
@@ -763,41 +757,40 @@ describe('Flattening', () => {
 });
 
 describe('Cell.async', () => {
-  test('Should work with a simple function', () => {
+  test('Should work with a simple function', async () => {
     const { data, run } = Cell.async(async () => await 1);
-    run().then(() => {
-      expect(data.value).toBe(1);
-    });
+    await run();
+    expect(data.get()).toBe(1);
   });
 
-  test('Should catch errors in getter function', () => {
+  test('Should catch errors in getter function', async () => {
     const getter = async () => {
       await true;
       throw new Error('Something went wrong!');
     };
 
     const { data, error, run } = Cell.async(getter);
-    run().then(() => {
-      expect(data.value).toBe(null);
-      expect(error.value).toHaveProperty('message', 'Something went wrong!');
-    });
+    await run();
+    expect(data.get()).toBe(null);
+    expect(error.get()).toHaveProperty('message', 'Something went wrong!');
   });
 
-  test('Should update loading state', () => {
+  test('Should update loading state', async () => {
     const getter = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 4000));
+      await new Promise((resolve) => setTimeout(resolve, 500));
       return true;
     };
 
     const { data, run, pending } = Cell.async(getter);
-    run();
-    expect(data.value).toBe(null);
-    expect(pending.value).toBe(true);
+    const runPromise = run();
 
-    setTimeout(() => {
-      expect(data.value).toBe(true);
-      expect(pending.value).toBe(false);
-    }, 4000);
+    expect(data.get()).toBe(null);
+    expect(pending.get()).toBe(true);
+
+    await runPromise;
+
+    expect(data.get()).toBe(true);
+    expect(pending.get()).toBe(false);
   });
 });
 
@@ -809,7 +802,7 @@ describe('Effect options', () => {
     const signal = abortController.signal;
     cell.listen(callback, { signal });
     abortController.abort();
-    cell.value = 2;
+    cell.set(2);
     expect(callback).not.toHaveBeenCalled();
   });
 
@@ -817,7 +810,7 @@ describe('Effect options', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
     cell.listen(callback, { once: true });
-    cell.value = 2;
+    cell.set(2);
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -825,8 +818,8 @@ describe('Effect options', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
     cell.listen(callback, { once: false });
-    cell.value = 2;
-    cell.value = 3;
+    cell.set(2);
+    cell.set(3);
     expect(callback).toHaveBeenCalledTimes(2);
   });
 
@@ -852,7 +845,7 @@ describe('Effect options', () => {
     cell.listen(callback1, { priority: 1 });
     cell.listen(callback2, { priority: 2 });
 
-    cell.value = 2;
+    cell.set(2);
 
     expect(stream).toBe('Hello, World!');
   });
@@ -873,7 +866,7 @@ describe('Effect options', () => {
     const callback = vi.fn();
     cell.listen(callback, { name: 'test' });
     cell.stopListeningTo('test');
-    cell.value = 2;
+    cell.set(2);
     expect(callback).not.toHaveBeenCalled();
   });
 
@@ -881,7 +874,7 @@ describe('Effect options', () => {
     const cell = Cell.source(1);
     const callback = vi.fn();
     cell.listen(callback, { weak: true });
-    cell.value = 2;
+    cell.set(2);
     expect(callback).toHaveBeenCalledTimes(1);
   });
 });
@@ -891,7 +884,7 @@ describe('Cell options', () => {
     const cell = Cell.source({ a: 1, b: { c: 5 } }, { deep: true });
     const callback = vi.fn();
     cell.listen(callback);
-    cell.value.b.c = 2;
+    cell.get().b.c = 2; // Deep reactivity test
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -899,17 +892,17 @@ describe('Cell options', () => {
     const cell = Cell.source({ a: 1, b: { c: 5 } });
     const callback = vi.fn();
     cell.listen(callback);
-    cell.value.a = 2;
+    cell.get().a = 2; // Deep reactivity test
     expect(callback).toHaveBeenCalledTimes(1);
 
-    cell.value.b.c = 90;
+    cell.get().b.c = 90; // Should not trigger update
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
   test('Immutable cells should not allow updates', () => {
     const cell = Cell.source(1, { immutable: true });
     expect(() => {
-      cell.value = 2;
+      cell.set(2);
     }).toThrowError('Cannot set the value of an immutable cell.');
   });
 
@@ -922,36 +915,11 @@ describe('Cell options', () => {
     );
     const callback = vi.fn();
     cell.listen(callback);
-    cell.value = { a: 1, b: 2 };
+    cell.set({ a: 1, b: 2 });
     expect(callback).toHaveBeenCalledTimes(0);
 
-    cell.value = { a: 1, b: 3 };
+    cell.set({ a: 1, b: 3 });
     expect(callback).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('SourceCell deproxy', () => {
-  test('Deproxies should return the original object', () => {
-    const original = { a: 1, b: 2 };
-    const cell = new SourceCell(original);
-    expect(cell.deproxy()).toBe(original);
-  });
-
-  test('should throw an error on deproxy if the cell is not an object', () => {
-    const cell = new SourceCell(1);
-    expect(() => {
-      cell.deproxy();
-    }).toThrowError('Cannot deproxy a non-object cell.');
-  });
-
-  test('should throw an error on deproxy if the cell is derived', () => {
-    const source = new SourceCell(1);
-    const derived = Cell.derived(() => source.value * 2);
-    expect(() => {
-      // Attempting to call deproxy on a derived cell should throw
-      // @ts-ignore - Testing invalid usage
-      derived.deproxy();
-    }).toThrowError('Cannot deproxy a derived cell.');
   });
 });
 
@@ -959,8 +927,8 @@ describe('SourceCell deproxy', () => {
 describe('Derived Cells', () => {
   test('derived cells should be available', () => {
     const s = Cell.source(1);
-    const f = Cell.derived(() => s.value + 1);
-    expect(f.value).toEqual(2);
+    const f = Cell.derived(() => s.get() + 1);
+    expect(f.get()).toEqual(2);
 
     const derived = s.derivedCells;
     expect(derived).toEqual([f]);
@@ -973,23 +941,23 @@ describe('Derived Cells', () => {
 
     const c = Cell.derived(() => {
       cb();
-      if (a.value > 1) {
-        return a.value + b.value;
+      if (a.get() > 1) {
+        return a.get() + b.get();
       }
-      return a.value;
+      return a.get();
     });
 
-    expect(c.value).toEqual(1);
+    expect(c.get()).toEqual(1);
     expect(cb).toHaveBeenCalledTimes(1);
-    b.value = 10;
+    b.set(10);
     expect(cb).toHaveBeenCalledTimes(1);
-    expect(c.value).toEqual(1); // No change.
-    a.value = 5;
+    expect(c.get()).toEqual(1); // No change.
+    a.set(5);
     expect(cb).toHaveBeenCalledTimes(2);
-    expect(c.value).toEqual(15);
-    b.value = 20;
+    expect(c.get()).toEqual(15);
+    b.set(20);
     expect(cb).toHaveBeenCalledTimes(3);
-    expect(c.value).toEqual(25);
+    expect(c.get()).toEqual(25);
   });
 });
 
@@ -999,19 +967,19 @@ describe('Equality Checks (deepEqual)', () => {
     const callback = vi.fn();
     cell.listen(callback);
 
-    cell.value = 1;
+    cell.set(1);
     expect(callback).not.toHaveBeenCalled();
-    cell.value = 2;
+    cell.set(2);
     expect(callback).toHaveBeenCalledTimes(1);
-    cell.value = 2;
+    cell.set(2);
     expect(callback).toHaveBeenCalledTimes(1);
 
     const strCell = Cell.source('hello');
     const strCallback = vi.fn();
     strCell.listen(strCallback);
-    strCell.value = 'hello';
+    strCell.set('hello');
     expect(strCallback).not.toHaveBeenCalled();
-    strCell.value = 'world';
+    strCell.set('world');
     expect(strCallback).toHaveBeenCalledTimes(1);
   });
 
@@ -1024,14 +992,14 @@ describe('Equality Checks (deepEqual)', () => {
     const callback = vi.fn();
     cell.listen(callback);
 
-    cell.value = date2; // Same date value
+    cell.set(date2); // Same date value
     expect(callback).not.toHaveBeenCalled();
 
-    cell.value = date3; // Different date value
+    cell.set(date3); // Different date value
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(date3);
 
-    cell.value = date3; // Same date value again
+    cell.set(date3); // Same date value again
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -1045,18 +1013,18 @@ describe('Equality Checks (deepEqual)', () => {
     const callback = vi.fn();
     cell.listen(callback);
 
-    cell.value = obj2; // Structurally same
+    cell.set(obj2); // Structurally same
     expect(callback).not.toHaveBeenCalled();
 
-    cell.value = obj3; // Different value for 'b'
+    cell.set(obj3); // Different value for 'b'
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(obj3);
 
-    cell.value = obj4; // Different value for 'a'
+    cell.set(obj4); // Different value for 'a'
     expect(callback).toHaveBeenCalledTimes(2);
     expect(callback).toHaveBeenCalledWith(obj4);
 
-    cell.value = { ...obj4 }; // Structurally same again
+    cell.set({ ...obj4 }); // Structurally same again
     expect(callback).toHaveBeenCalledTimes(2);
   });
 
@@ -1070,18 +1038,18 @@ describe('Equality Checks (deepEqual)', () => {
     const callback = vi.fn();
     cell.listen(callback);
 
-    cell.value = arr2; // Same content
+    cell.set(arr2); // Same content
     expect(callback).not.toHaveBeenCalled();
 
-    cell.value = arr3; // Different element
+    cell.set(arr3); // Different element
     expect(callback).toHaveBeenCalledTimes(1);
     expect(callback).toHaveBeenCalledWith(arr3);
 
-    cell.value = arr4; // Different length
+    cell.set(arr4); // Different length
     expect(callback).toHaveBeenCalledTimes(2);
     expect(callback).toHaveBeenCalledWith(arr4);
 
-    cell.value = [...arr4]; // Same content again
+    cell.set([...arr4]); // Same content again
     expect(callback).toHaveBeenCalledTimes(2);
   });
 
@@ -1092,15 +1060,15 @@ describe('Equality Checks (deepEqual)', () => {
     const callback = vi.fn();
     cell.listen(callback);
 
-    cell.value = null;
+    cell.set(null);
     expect(callback).not.toHaveBeenCalled();
-    cell.value = undefined;
+    cell.set(undefined);
     expect(callback).toHaveBeenCalledTimes(1);
-    cell.value = undefined;
+    cell.set(undefined);
     expect(callback).toHaveBeenCalledTimes(1);
-    cell.value = 0;
+    cell.set(0);
     expect(callback).toHaveBeenCalledTimes(2);
-    cell.value = null;
+    cell.set(null);
     expect(callback).toHaveBeenCalledTimes(3);
   });
 });
