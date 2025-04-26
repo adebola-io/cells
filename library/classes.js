@@ -1,5 +1,3 @@
-/** @import { CallableCell } from './s.js' */
-
 /**
  * @template Input, Output
  * @typedef {Object} AsyncRequestAtoms
@@ -884,7 +882,7 @@ export class SourceCell extends Cell {
           if (isMutativeMethod) {
             // @ts-ignore: Direct access is faster than Reflection here.
             return (...args) => {
-              // @ts-ignore
+              // @ts-ignore: Direct access is faster than Reflection here.
               const result = target[prop](...args);
               UPDATE_BUFFER.add(this);
               if (!IS_UPDATING) triggerUpdate();
