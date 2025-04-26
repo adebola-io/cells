@@ -239,7 +239,6 @@ export class Cell {
   }
 
   /**
-   * @readonly
    * @returns {Array<DerivedCell<any>>}
    */
   get derivedCells() {
