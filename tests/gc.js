@@ -2,13 +2,13 @@ import('../library/index.js').then((module) => {
   const Cell = module.Cell;
 
   function createDerived() {
-    let cell = Cell.source(1);
-    Cell.derived(() => cell.value + 1);
+    const cell = Cell.source(1);
+    Cell.derived(() => cell.get() + 1);
     return cell;
   }
 
   global.gc?.();
-  let cell = createDerived();
+  const cell = createDerived();
 
   setTimeout(() => {
     global.gc?.();

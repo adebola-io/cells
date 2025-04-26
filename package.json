@@ -1,6 +1,6 @@
 {
   "name": "@adbl/cells",
-  "version": "0.0.13",
+  "version": "0.0.14",
   "description": "A simple implementation of reactive updates for JavaScript",
   "main": "index.js",
   "private": false,
@@ -11,6 +11,7 @@
     "test-once": "vitest run",
     "test": "vitest",
     "build": "tsc --p jsconfig.json",
+    "postbuild": "chmod +x ./add-references.sh && ./add-references.sh",
     "prepublish": "bunx pkg-pr-new publish"
   },
   "exports": {

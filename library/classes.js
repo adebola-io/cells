@@ -48,11 +48,16 @@
  */
 
 /**
+ * @template T
+ * @typedef {() => T} Cellular
+ */
+
+/**
  * The nesting level of batch operations.
  * This will prevent nested batch operations from triggering effects when they finish.
  * @type {number}
  */
-let batchNestingLevel = 0;
+let BATCH_NESTING_LEVEL = 0;
 
 /**
  * A map of effect tuples to be executed in a batch.
@@ -60,26 +65,26 @@ let batchNestingLevel = 0;
  * All callbacks in this map  will be executed only once in a batch.
  * @type {Map<Function, any>}
  */
-let batchedEffects = new Map();
+let BATCHED_EFFECTS = new Map();
 
 /**
  * A value representing the computed values that are currently being calculated.
  * It is an array so it can keep track of nested computed values.
  * @type {DerivedCell<any>[]}
  */
-const activeComputedValues = [];
+const ACTIVE_DERIVED_CTX = [];
 
 /**
  * Tracks cells that need to be updated during the update cycle.
  * Cells are added to this stack to be processed and updated sequentially.
  * @type {Set<Cell<any>>}
  */
-const updateBuffer = new Set();
+const UPDATE_BUFFER = new Set();
 
 /** @type {WeakMap<Cell<any>, Set<WeakRef<DerivedCell<any>>>>} */
-const derivedCellMap = new WeakMap();
+const DERIVED_CELLS = new WeakMap();
 
-let isUpdating = false;
+let IS_UPDATING = false;
 
 /** @type {Error[]} */
 const cellErrors = [];
@@ -94,17 +99,18 @@ const cellErrors = [];
  * updates of the same cell.
  */
 function triggerUpdate() {
-  isUpdating = true;
-  for (const cell of updateBuffer) {
+  IS_UPDATING = true;
+  for (const cell of UPDATE_BUFFER) {
     if (cell instanceof DerivedCell) {
       const newValue = cell.computedFn();
-      if (deepEqual(cell.peek(), newValue)) continue;
+      // @ts-ignore: wvalue is protected.
+      if (deepEqual(cell.wvalue, newValue)) continue;
       // @ts-ignore: wvalue is protected.
       cell.wvalue = newValue;
     }
 
     // Run computed dependents.
-    const computedDependents = derivedCellMap.get(cell);
+    const computedDependents = DERIVED_CELLS.get(cell);
     if (computedDependents)
       for (const dependent of computedDependents) {
         const deref = dependent.deref();
@@ -114,22 +120,22 @@ function triggerUpdate() {
         }
 
         const computedCell = deref;
-        if (batchNestingLevel > 0) {
-          batchedEffects.set(() => {
+        if (BATCH_NESTING_LEVEL > 0) {
+          BATCHED_EFFECTS.set(() => {
             if (!computedCell.initialized) return;
-            updateBuffer.add(computedCell);
+            UPDATE_BUFFER.add(computedCell);
           }, undefined);
         } else {
           if (!computedCell.initialized) continue;
-          updateBuffer.add(computedCell);
+          UPDATE_BUFFER.add(computedCell);
         }
       }
 
     //@ts-ignore: Cell.update is protected.
     cell.update();
   }
-  updateBuffer.clear();
-  isUpdating = false;
+  UPDATE_BUFFER.clear();
+  IS_UPDATING = false;
   throwAnyErrors();
 }
 
@@ -141,77 +147,26 @@ function throwAnyErrors() {
   }
 }
 
-const mutativeMethods = {
-  Map: {
-    set: Symbol('set'),
-    delete: Symbol('delete'),
-    clear: Symbol('clear'),
-  },
-  Set: {
-    add: Symbol('add'),
-    delete: Symbol('delete'),
-    clear: Symbol('clear'),
-  },
-  Array: {
-    push: Symbol('push'),
-    pop: Symbol('pop'),
-    shift: Symbol('shift'),
-    unshift: Symbol('unshift'),
-    splice: Symbol('splice'),
-    sort: Symbol('sort'),
-    reverse: Symbol('reverse'),
-  },
-  Date: {
-    setDate: Symbol('setDate'),
-    setMonth: Symbol('setMonth'),
-    setFullYear: Symbol('setFullYear'),
-    setHours: Symbol('setHours'),
-    setMinutes: Symbol('setMinutes'),
-    setSeconds: Symbol('setSeconds'),
-    setMilliseconds: Symbol('setMilliseconds'),
-  },
-};
-const mutativeMapMethods = /^(set|delete|clear)$/;
-const mutativeSetMethods = /^(add|delete|clear)$/;
-const mutativeArrayMethods = /^(push|pop|shift|unshift|splice|sort|reverse)$/;
-const mutativeDateMethods =
-  /^(setDate|setMonth|setFullYear|setHours|setMinutes|setSeconds|setMilliseconds)$/;
-
-/**
- * Proxies mutative methods of a given value to trigger cell updates when called.
- *
- * @template {object} T
- * @param {T} value - The object whose methods are to be proxied.
- * @param {keyof typeof mutativeMethods} prototypeName - The name of the prototype (e.g., 'Map', 'Set') whose methods are being proxied.
- * @param {Cell<any>} cell - The cell to be updated when a mutative method is called.
- */
-const proxyMutativeMethods = (value, prototypeName, cell) => {
-  for (const method in mutativeMethods[prototypeName]) {
-    Reflect.set(
-      value,
-      Reflect.get(mutativeMethods[prototypeName], method),
-      /**
-       * @param {...any} args - The arguments passed to the mutative method.
-       * @returns {any} The result of calling the original method.
-       */
-      (...args) => {
-        // @ts-ignore
-        const innerMethod = value[method]; // Direct access is faster than Reflection here.
-        const result = innerMethod.apply(value, args);
-        updateBuffer.add(cell);
-        if (!isUpdating) triggerUpdate();
-        return result;
-      }
-    );
-  }
-};
-
-/**
- * @template T
- * @typedef {{
- *    deref: () => T | undefined
- * }} Reference
- */
+const mutativeMapMethods = new Set(['set', 'delete', 'clear']);
+const mutativeSetMethods = new Set(['add', 'delete', 'clear']);
+const mutativeArrayMethods = new Set([
+  'push',
+  'pop',
+  'shift',
+  'unshift',
+  'splice',
+  'sort',
+  'reverse',
+]);
+const mutativeDateMethods = new Set([
+  'setDate',
+  'setMonth',
+  'setFullYear',
+  'setHours',
+  'setMinutes',
+  'setSeconds',
+  'setMilliseconds',
+]);
 
 /** @template T */
 class Effect {
@@ -266,7 +221,7 @@ class Effect {
  * count.listen(value => console.log('Count changed:', value));
  *
  * // Update the value
- * count.value = 1; // Logs: Count changed: 1
+ * count.set(1); // Logs: Count changed: 1
  * ```
  */
 export class Cell {
@@ -284,11 +239,10 @@ export class Cell {
   }
 
   /**
-   * @readonly
    * @returns {Array<DerivedCell<any>>}
    */
   get derivedCells() {
-    const dependents = derivedCellMap.get(this);
+    const dependents = DERIVED_CELLS.get(this);
     const cells = [];
     if (dependents) {
       for (const cell of dependents) {
@@ -317,14 +271,15 @@ export class Cell {
    * @returns {T} The value of the Cell.
    */
   valueOf() {
-    return this.revalued;
+    return this.wvalue;
   }
 
   /**
-   * Gets the current value of the cell.
+   * Gets the current value of the cell and registers it as a dependency if called within a derived cell computation.
+   * @returns {T} The value of the Cell.
    */
-  get value() {
-    return this.wvalue;
+  get() {
+    return this.revalued;
   }
 
   /**
@@ -332,7 +287,6 @@ export class Cell {
    * @returns {string}
    */
   toString() {
-    // @ts-ignore
     return String(this.wvalue);
   }
 
@@ -342,19 +296,22 @@ export class Cell {
    */
   get revalued() {
     const currentlyComputedValue =
-      activeComputedValues[activeComputedValues.length - 1];
+      ACTIVE_DERIVED_CTX[ACTIVE_DERIVED_CTX.length - 1];
 
-    if (currentlyComputedValue === undefined) return this.wvalue;
+    if (currentlyComputedValue === undefined) {
+      return this.wvalue;
+    }
 
-    let dependents = derivedCellMap.get(this);
+    let dependents = DERIVED_CELLS.get(this);
     if (dependents === undefined) {
       dependents = new Set();
-      derivedCellMap.set(this, dependents);
+      DERIVED_CELLS.set(this, dependents);
     }
 
     const isAlreadySubscribed = dependents?.has(currentlyComputedValue.ref);
-    if (isAlreadySubscribed) return this.wvalue;
-
+    if (isAlreadySubscribed) {
+      return this.wvalue;
+    }
     dependents.add(currentlyComputedValue.ref);
     return this.wvalue;
   }
@@ -504,7 +461,7 @@ export class Cell {
    */
   update() {
     // Run watchers.
-    const wvalue = this.peek();
+    const wvalue = this.wvalue;
     const effects = this.#effects;
     let len = effects.length;
 
@@ -517,8 +474,8 @@ export class Cell {
         continue;
       }
 
-      if (batchNestingLevel > 0) {
-        batchedEffects.set(watcher, wvalue);
+      if (BATCH_NESTING_LEVEL > 0) {
+        BATCHED_EFFECTS.set(watcher, wvalue);
       } else {
         try {
           watcher(wvalue);
@@ -532,7 +489,7 @@ export class Cell {
   }
 
   /**
-   * Returns the current value of the cell without registering a watcher.
+   * Returns the current value of the cell without registering dependencies.
    * @returns {T} - The current value of the cell.
    */
   peek() {
@@ -549,10 +506,10 @@ export class Cell {
    * import { Cell } from '@adbl/cells';
    *
    * const cell = Cell.source('Hello world');
-   * console.log(cell.value); // Hello world.
+   * console.log(cell.get()); // Hello world.
    *
-   * cell.value = 'Greetings!';
-   * console.log(cell.value) // Greetings!
+   * cell.set('Greetings!');
+   * console.log(cell.get()) // Greetings!
    * ```
    */
   static source = (value, options) => new SourceCell(value, options);
@@ -566,12 +523,12 @@ export class Cell {
    * import { Cell } from '@adbl/cells';
    *
    * const cell = Cell.source(2);
-   * const derived = Cell.derived(() => cell.value * 2);
+   * const derived = Cell.derived(() => cell.get() * 2);
    *
-   * console.log(derived.value); // 4
+   * console.log(derived.get()); // 4
    *
-   * cell.value = 3;
-   * console.log(derived.value); // 6
+   * cell.set(3);
+   * console.log(derived.get()); // 6
    * ```
    */
   static derived = (callback) => new DerivedCell(callback);
@@ -583,7 +540,7 @@ export class Cell {
    * @returns {X} The return value of the callback.
    */
   static batch = (callback) => {
-    batchNestingLevel++;
+    BATCH_NESTING_LEVEL++;
     /** @type {X | undefined} */
     let value = undefined;
     let error;
@@ -592,16 +549,16 @@ export class Cell {
     } catch (e) {
       error = e;
     }
-    batchNestingLevel--;
+    BATCH_NESTING_LEVEL--;
     if (error instanceof Error) {
       cellErrors.push(error);
     }
-    if (batchNestingLevel === 0) {
-      for (const [effect, args] of batchedEffects) {
+    if (BATCH_NESTING_LEVEL === 0) {
+      for (const [effect, args] of BATCHED_EFFECTS) {
         effect(args);
       }
-      if (!isUpdating) triggerUpdate();
-      batchedEffects = new Map();
+      if (!IS_UPDATING) triggerUpdate();
+      BATCHED_EFFECTS = new Map();
     }
     throwAnyErrors();
     return /** @type {X} */ (value);
@@ -693,23 +650,23 @@ export class Cell {
     let initialInput = undefined;
 
     async function run(input = initialInput) {
-      pending.value = true;
-      error.value = null;
-      data.value = null;
+      pending.set(true);
+      error.set(null);
+      data.set(null);
 
       await Cell.batch(async () => {
         try {
           initialInput = input;
           const result = await getter(/** @type {X} */ (input));
-          data.value = result;
+          data.set(result);
         } catch (e) {
           if (e instanceof Error) {
-            error.value = e;
+            error.set(e);
           } else {
             throw e;
           }
         } finally {
-          pending.value = false;
+          pending.set(false);
         }
       });
     }
@@ -720,23 +677,23 @@ export class Cell {
      */
     async function reload(newInput, changeLoadingState = true) {
       if (changeLoadingState) {
-        pending.value = true;
+        pending.set(true);
       }
 
       try {
         const result = await getter(
           /** @type {X} */ (newInput ?? initialInput)
         );
-        data.value = result;
+        data.set(result);
       } catch (e) {
         if (e instanceof Error) {
-          error.value = e;
+          error.set(e);
         } else {
           throw e;
         }
       } finally {
         if (changeLoadingState) {
-          pending.value = false;
+          pending.set(false);
         }
       }
     }
@@ -766,14 +723,14 @@ export class DerivedCell extends Cell {
     this.ref = new WeakRef(this);
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
-      activeComputedValues.push(this);
+      ACTIVE_DERIVED_CTX.push(this);
       let value = this.wvalue;
       try {
         value = computedFn();
       } catch (e) {
         if (e instanceof Error) cellErrors.push(e);
       }
-      activeComputedValues.pop();
+      ACTIVE_DERIVED_CTX.pop();
       return value;
     };
     this.computedFn = /** @type {() => T} */ (derivationWrapper);
@@ -787,9 +744,11 @@ export class DerivedCell extends Cell {
   ref;
 
   /**
-   * @readonly
+   * Gets the current value of the derived cell, computing it if necessary,
+   * and registers it as a dependency if called within another derived cell computation.
+   * @returns {T} The value of the Cell.
    */
-  get value() {
+  get() {
     if (!this.initialized) {
       this.initialized = true;
       this.setValue(this.computedFn());
@@ -826,17 +785,6 @@ export class DerivedCell extends Cell {
     }
     return super.runAndListen(callback, options);
   }
-
-  /**
-   * @readonly
-   */
-  set value(_) {
-    throw new Error('Cannot set a derived Cell value.');
-  }
-
-  deproxy() {
-    throw new Error('Cannot deproxy a derived cell.');
-  }
 }
 
 /**
@@ -857,13 +805,10 @@ export class DerivedCell extends Cell {
  * // With options
  * const immutableCell = Cell.source(42, { immutable: true });
  * // Will throw error:
- * immutableCell.value = 43;
+ * immutableCell.set(43);
  * ```
  */
 export class SourceCell extends Cell {
-  /** @type {object | undefined} */
-  #originalObject;
-
   /**
    * Creates a new Cell with the provided value.
    * @param {T} value
@@ -873,71 +818,40 @@ export class SourceCell extends Cell {
     super();
 
     if (options !== undefined) this.options = options;
-    this.setValue(this.#proxy(value));
-
-    if (typeof value === 'object' && value !== null) {
-      this.#originalObject = value;
-    }
-  }
-
-  /**
-   * For cells containing objects, returns the object itself.
-   * This can be useful in scenarios where unfettered access to the original object is needed,
-   * such as when using the object as a cache.
-   *
-   * @example
-   * const cell = new SourceCell({ a: 1, b: 2 });
-   * console.log(cell.deproxy()); // { a: 1, b: 2 }
-   *
-   * cell.value = { a: 3, b: 4 };
-   * console.log(cell.deproxy()); // { a: 3, b: 4 }
-   *
-   * @returns {T extends object ? T : never} The original object if T is an object, otherwise never.
-   */
-  deproxy() {
-    const originalObject = this.#originalObject;
-    if (typeof originalObject === 'object' && originalObject !== null) {
-      return /** @type {T extends object ? T : never} */ (originalObject);
-    }
-    throw new Error('Cannot deproxy a non-object cell.');
+    this.setValue(value);
   }
 
   peek() {
-    const originalObject = this.#originalObject;
-    if (typeof originalObject === 'object' && originalObject !== null) {
-      return /** @type {T extends object ? T : never} */ (originalObject);
-    }
     return this.wvalue;
   }
 
-  get value() {
-    return this.revalued;
+  /**
+   * Gets the current value of the source cell and registers it as a dependency if called within a derived cell computation.
+   * @returns {T} The value of the Cell.
+   */
+  get() {
+    return this.#proxy(this.revalued);
   }
 
   /**
    * Sets the value stored in the Cell and triggers an update.
    * @param {T} value
    */
-  set value(value) {
+  set(value) {
     if (this.options?.immutable) {
       throw new Error('Cannot set the value of an immutable cell.');
     }
 
-    const oldValue = this.peek();
+    const oldValue = this.wvalue;
     const isEqual = this.options?.equals
       ? this.options.equals(oldValue, value)
       : deepEqual(oldValue, value);
 
     if (isEqual) return;
 
-    this.setValue(this.#proxy(value));
-    if (typeof value === 'object' && value !== null) {
-      this.#originalObject = value;
-    } else {
-      this.#originalObject = undefined;
-    }
-    updateBuffer.add(this);
-    if (!isUpdating) triggerUpdate();
+    this.setValue(value);
+    UPDATE_BUFFER.add(this);
+    if (!IS_UPDATING) triggerUpdate();
   }
 
   /**
@@ -947,20 +861,7 @@ export class SourceCell extends Cell {
    * @returns {T} - The proxied value.
    */
   #proxy(value) {
-    if (typeof value !== 'object' || value === null) {
-      return value;
-    }
-
-    if (value instanceof Map) {
-      proxyMutativeMethods(value, 'Map', this);
-    } else if (value instanceof Set) {
-      proxyMutativeMethods(value, 'Set', this);
-    } else if (value instanceof Date) {
-      proxyMutativeMethods(value, 'Date', this);
-    } else if (ArrayBuffer.isView(value) || Array.isArray(value)) {
-      proxyMutativeMethods(value, 'Array', this);
-    }
-
+    if (typeof value !== 'object' || value === null) return value;
     return new Proxy(value, {
       get: (target, prop) => {
         this.revalued;
@@ -968,6 +869,27 @@ export class SourceCell extends Cell {
           // @ts-ignore: Direct access is faster than Reflection here.
           return this.#proxy(target[prop]);
         }
+
+        if (typeof prop === 'string') {
+          const isMutativeMethod =
+            (target instanceof Map && mutativeMapMethods.has(prop)) ||
+            (target instanceof Set && mutativeSetMethods.has(prop)) ||
+            (target instanceof Date && mutativeDateMethods.has(prop)) ||
+            ((ArrayBuffer.isView(target) || Array.isArray(target)) &&
+              mutativeArrayMethods.has(prop));
+
+          if (isMutativeMethod) {
+            // @ts-ignore: Direct access is faster than Reflection here.
+            return (...args) => {
+              // @ts-ignore: Direct access is faster than Reflection here.
+              const result = target[prop](...args);
+              UPDATE_BUFFER.add(this);
+              if (!IS_UPDATING) triggerUpdate();
+              return result;
+            };
+          }
+        }
+
         // @ts-ignore: Direct access is faster than Reflection here.
         let value = target[prop];
 
@@ -975,41 +897,19 @@ export class SourceCell extends Cell {
           value = value.bind(target);
         }
 
-        if (typeof prop === 'string') {
-          if (target instanceof Map && mutativeMapMethods.test(prop)) {
-            // @ts-ignore: Direct access is faster than Reflection here.
-            return target[mutativeMethods.Map[prop]];
-          }
-
-          if (target instanceof Set && mutativeSetMethods.test(prop)) {
-            // @ts-ignore: Direct access is faster than Reflection here.
-            return target[mutativeMethods.Set[prop]];
-          }
-
-          if (target instanceof Date && mutativeDateMethods.test(prop)) {
-            // @ts-ignore: Direct access is faster than Reflection here.
-            return target[mutativeMethods.Date[prop]];
-          }
-
-          if (
-            (ArrayBuffer.isView(target) || Array.isArray(target)) &&
-            mutativeArrayMethods.test(prop)
-          ) {
-            // @ts-ignore: Direct access is faster than Reflection here.
-            return target[mutativeMethods.Array[prop]];
-          }
-        }
-
         return value;
       },
       set: (target, prop, value) => {
-        const formerValue = Reflect.get(target, prop);
-        Reflect.set(target, prop, value);
-
+        // @ts-ignore: dynamic object access.
+        const formerValue = target[prop];
         const isEqual = deepEqual(formerValue, value);
         if (!isEqual) {
-          updateBuffer.add(this);
-          if (!isUpdating) triggerUpdate();
+          // @ts-ignore: dynamic object access.
+          target[prop] = value;
+          UPDATE_BUFFER.add(this);
+          if (!IS_UPDATING) {
+            triggerUpdate();
+          }
         }
 
         return true;
