@@ -49,7 +49,7 @@ Derived cells allow you to create computed values based on other cells. They upd
 
 ```javascript
 const count = Cell.source(0);
-const doubledCount = Cell.derived(() => count.value * 2);
+const doubledCount = Cell.derived(() => count.get() * 2);
 
 console.log(doubledCount.get()); // Output: 0
 
