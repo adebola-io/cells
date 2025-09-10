@@ -103,9 +103,9 @@ function triggerUpdate() {
   for (const cell of UPDATE_BUFFER) {
     if (cell instanceof DerivedCell) {
       const newValue = cell.computedFn();
-      // @ts-ignore: wvalue is protected.
+      // @ts-expect-error: wvalue is protected.
       if (deepEqual(cell.wvalue, newValue)) continue;
-      // @ts-ignore: wvalue is protected.
+      // @ts-expect-error: wvalue is protected.
       cell.wvalue = newValue;
     }
 
@@ -131,7 +131,7 @@ function triggerUpdate() {
         }
       }
 
-    //@ts-ignore: Cell.update is protected.
+    // @ts-expect-error: Cell.update is protected.
     cell.update();
   }
   UPDATE_BUFFER.clear();
@@ -233,7 +233,7 @@ export class Cell {
   constructor() {
     if (new.target === Cell) {
       throw new Error(
-        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.'
+        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.',
       );
     }
   }
@@ -342,7 +342,7 @@ export class Cell {
 
     if (options?.name && this.isListeningTo(options.name)) {
       throw new Error(
-        `An effect with the name "${options.name}" is already listening to this cell.`
+        `An effect with the name "${options.name}" is already listening to this cell.`,
       );
     }
 
@@ -542,7 +542,7 @@ export class Cell {
   static batch = (callback) => {
     BATCH_NESTING_LEVEL++;
     /** @type {X | undefined} */
-    let value = undefined;
+    let value;
     let error;
     try {
       value = callback();
@@ -591,11 +591,11 @@ export class Cell {
       return Cell.flatten(value.wvalue);
     }
     if (Array.isArray(value)) {
-      // @ts-ignore:
+      // @ts-expect-error:
       return Cell.flattenArray(value);
     }
     if (value instanceof Object) {
-      // @ts-ignore:
+      // @ts-expect-error:
       return Cell.flattenObject(value);
     }
     return value;
@@ -682,7 +682,7 @@ export class Cell {
 
       try {
         const result = await getter(
-          /** @type {X} */ (newInput ?? initialInput)
+          /** @type {X} */ (newInput ?? initialInput),
         );
         data.set(result);
       } catch (e) {
@@ -866,7 +866,7 @@ export class SourceCell extends Cell {
       get: (target, prop) => {
         this.revalued;
         if (this.options?.deep) {
-          // @ts-ignore: Direct access is faster than Reflection here.
+          // @ts-expect-error: Direct access is faster than Reflection here.
           return this.#proxy(target[prop]);
         }
 
@@ -879,9 +879,9 @@ export class SourceCell extends Cell {
               mutativeArrayMethods.has(prop));
 
           if (isMutativeMethod) {
-            // @ts-ignore: Direct access is faster than Reflection here.
+            // @ts-expect-error: Direct access is faster than Reflection here.
             return (...args) => {
-              // @ts-ignore: Direct access is faster than Reflection here.
+              // @ts-expect-error: Direct access is faster than Reflection here.
               const result = target[prop](...args);
               UPDATE_BUFFER.add(this);
               if (!IS_UPDATING) triggerUpdate();
@@ -890,7 +890,7 @@ export class SourceCell extends Cell {
           }
         }
 
-        // @ts-ignore: Direct access is faster than Reflection here.
+        // @ts-expect-error: Direct access is faster than Reflection here.
         let value = target[prop];
 
         if (typeof value === 'function') {
@@ -900,11 +900,11 @@ export class SourceCell extends Cell {
         return value;
       },
       set: (target, prop, value) => {
-        // @ts-ignore: dynamic object access.
+        // @ts-expect-error: dynamic object access.
         const formerValue = target[prop];
         const isEqual = deepEqual(formerValue, value);
         if (!isEqual) {
-          // @ts-ignore: dynamic object access.
+          // @ts-expect-error: dynamic object access.
           target[prop] = value;
           UPDATE_BUFFER.add(this);
           if (!IS_UPDATING) {
