@@ -496,11 +496,12 @@ export class Cell {
   }
 
   /**
-   * @template T
+   * @template U
    * Creates a new Cell instance with the provided value.
-   * @param {T} value - The value to be stored in the Cell.
-   * @param {Partial<CellOptions<T>>} [options] - The options for the cell.
-   * @returns {SourceCell<T>} A new Cell instance.
+   * @param {U} value - The value to be stored in the Cell.
+   * @param {Partial<CellOptions<U>>} [options] - The options for the cell.
+   * @returns {SourceCell<U>} A new Cell instance.
+   * @type <U>(value: U, options?: Partial<CellOptions<U>>) => SourceCell<U>
    * ```
    * import { Cell } from '@adbl/cells';
    *
@@ -514,10 +515,11 @@ export class Cell {
   static source = (value, options) => new SourceCell(value, options);
 
   /**
-   * @template T
+   * @template U
    * Creates a new Derived instance with the provided callback function.
-   * @param {() => T} callback - The callback function to be used by the Derived instance.
-   * @returns {DerivedCell<T>} A new Derived instance.
+   * @param {() => U} callback - The callback function to be used by the Derived instance.
+   * @returns {DerivedCell<U>} A new Derived instance.
+   * @type <U>(callback: () => U) => DerivedCell<U>
    * ```
    * import { Cell } from '@adbl/cells';
    *
