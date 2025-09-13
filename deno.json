@@ -1,6 +1,6 @@
 {
   "name": "@adbl/cells",
-  "version": "1.0.17",
+  "version": "1.0.18",
   "exports": "./dist/index.js",
   "publish": {
     "include": ["dist", "README.md"],

@@ -628,11 +628,11 @@ export class Cell {
   /**
    * Wraps an asynchronous function with managed state.
    *
-   * @template X - The type of the input parameter for the getter function.
-   * @template Y - The type of the output returned by the getter function.
-   * @template {(input: X) => Promise<Y>} Getter - A function that performs the asynchronous operation.
+   * @template {(...args: any[]) => Promise<any>} Getter - A function that performs the asynchronous operation.
+   * @template {Parameters<Getter>[0]} [X=Parameters<Getter>[0]]
+   * @template {Awaited<ReturnType<Getter>>} [Y=Awaited<ReturnType<Getter>>]
    * @param {Getter} getter - A function that performs the asynchronous operation.
-   * @returns {AsyncRequestAtoms<X, Y, Getter>} An object containing cells for pending, data, and error states,
+   * @returns {AsyncRequestAtoms<Parameters<Getter>[0], Awaited<ReturnType<Getter>>, Getter>} An object containing cells for pending, data, and error states,
    *          as well as functions to run and reload the operation.
    *
    * @example
@@ -649,7 +649,7 @@ export class Cell {
     const error = Cell.source(/** @type {Error | null} */ (null));
 
     /** @type {X | undefined} */
-    let initialInput = undefined;
+    let initialInput;
 
     async function run(input = initialInput) {
       pending.set(true);
