@@ -1,5 +1,5 @@
 /**
- * @template Input, Output
+ * @template Input, Output, Getter
  * @typedef {Object} AsyncRequestAtoms
  *
  * @property {SourceCell<boolean>} pending
@@ -11,10 +11,19 @@
  * @property {SourceCell<Error | null>} error
  * Represents the errors returned by the asynchronous request, if any.
  *
- * @property {NeverIfAny<Input> extends never ? (input?: Input) => Promise<void> : (input: Input) => Promise<void>} run
+ * @property {Getter extends (...args: infer P) => any ? P['length'] extends 0 ? SimplePromiseFn: PromiseFnWithArgs<P> : SimplePromiseFn} run
  * Triggers the asynchronous request.
  *
  * @property {(newInput?: Input, changeLoadingState?: boolean) => Promise<void>} reload Triggers the asynchronous request again with an optional new input and optionally changes the loading state.
+ */
+
+/**
+ * @typedef {() => Promise<void>} SimplePromiseFn
+ */
+
+/**
+ * @template {Array<any>} Args
+ * @typedef {(...args: Args) => Promise<void>} PromiseFnWithArgs
  */
 
 /**
@@ -40,16 +49,6 @@
  * Whether the cell should watch for changes deep into the given value. By default the cell only reacts to changes at the top level.
  * @property {(oldValue: T, newValue: T) => boolean} [equals]
  * A function that determines whether two values are equal. If not provided, the default equality function will be used.
- */
-
-/**
- * @template T
- * @typedef {0 extends (1 & T) ? never : T} NeverIfAny
- */
-
-/**
- * @template T
- * @typedef {() => T} Cellular
  */
 
 /**
@@ -629,8 +628,9 @@ export class Cell {
    *
    * @template X - The type of the input parameter for the getter function.
    * @template Y - The type of the output returned by the getter function.
-   * @param {(input: X) => Promise<Y>} getter - A function that performs the asynchronous operation.
-   * @returns {AsyncRequestAtoms<X, Y>} An object containing cells for pending, data, and error states,
+   * @template {(input: X) => Promise<Y>} Getter - A function that performs the asynchronous operation.
+   * @param {Getter} getter - A function that performs the asynchronous operation.
+   * @returns {AsyncRequestAtoms<X, Y, Getter>} An object containing cells for pending, data, and error states,
    *          as well as functions to run and reload the operation.
    *
    * @example
@@ -702,6 +702,7 @@ export class Cell {
       pending,
       data,
       error,
+      // @ts-expect-error
       run,
       reload,
     };
