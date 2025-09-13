@@ -205,7 +205,7 @@ class Effect {
 }
 
 /**
- * @template {*} T The type of value stored in the cell
+ * @template {*} out T The type of value stored in the cell
  *
  * Base class for reactive cells.
  * This class should not be instantiated directly - use `Cell.source` or
@@ -712,7 +712,7 @@ export class Cell {
 /**
  * A class that represents a computed value that depends on other reactive values.
  * The computed value is automatically updated when any of its dependencies change.
- * @template {*} T
+ * @template {*} out T
  * @extends {Cell<T>}
  */
 export class DerivedCell extends Cell {
@@ -789,7 +789,7 @@ export class DerivedCell extends Cell {
 }
 
 /**
- * @template {*} T
+ * @template {*} out T
  * @extends {Cell<T>}
  * A cell whose value can be directly modified.
  * Source cells are the primary way to introduce reactivity.
