@@ -22,7 +22,7 @@ describe('Cells', () => {
         a: 1,
         b: { c: 2, d: 3 },
       },
-      { deep: true }
+      { deep: true },
     );
     const callback = vi.fn();
     cell.listen(callback);
@@ -391,7 +391,7 @@ describe('Derived cells', () => {
     expect(callback).toHaveBeenCalledWith(null);
 
     const derivedUndefined = Cell.derived(() =>
-      cell.get() > 0 ? cell.get() : undefined
+      cell.get() > 0 ? cell.get() : undefined,
     );
     expect(derivedUndefined.get()).toBeUndefined();
     const callbackUndefined = vi.fn();
@@ -792,6 +792,131 @@ describe('Cell.async', () => {
     expect(data.get()).toBe(true);
     expect(pending.get()).toBe(false);
   });
+
+  test('Should abort previous async operations when a new one starts', async () => {
+    const getter = vi.fn(async function (value) {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => resolve(value * 2), 100);
+        this.signal.addEventListener('abort', () => {
+          clearTimeout(timeout);
+          reject(new Error('Aborted'));
+        });
+      });
+      return value * 2;
+    });
+
+    const { data, run, error } = Cell.async(getter);
+
+    const promise1 = run(5);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const promise2 = run(10);
+
+    await Promise.allSettled([promise1, promise2]);
+
+    expect(data.get()).toBe(20); // 10 * 2
+    expect(getter).toHaveBeenCalledTimes(2);
+  });
+
+  test('Should pass AbortSignal to getter function', async () => {
+    const getter = vi.fn(async function (value) {
+      expect(this.signal).toBeInstanceOf(AbortSignal);
+      return value;
+    });
+
+    const { data, run } = Cell.async(getter);
+    const result = await run(42);
+    expect(result).toBe(42);
+    expect(data.get()).toBe(42);
+    expect(getter).toHaveBeenCalledWith(42);
+  });
+
+  test('run() should return the response data', async () => {
+    const { data, run } = Cell.async(async (value) => value * 2);
+    const result = await run(5);
+    expect(result).toBe(10);
+    expect(data.get()).toBe(10);
+  });
+
+  test('run() should return null on error', async () => {
+    const getter = async () => {
+      throw new Error('Test error');
+    };
+    const { data, run } = Cell.async(getter);
+    const result = await run();
+    expect(result).toBe(null);
+    expect(data.get()).toBe(null);
+  });
+
+  test('run() should abort and return null if previous operation is aborted', async () => {
+    let callCount = 0;
+    const getter = vi.fn(async function () {
+      callCount++;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (this.signal.aborted) {
+        throw new Error('Aborted');
+      }
+      return `result${callCount}`;
+    });
+
+    const { data, run } = Cell.async(getter);
+
+    // Start first run
+    const promise1 = run();
+
+    // Quickly start second run
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const result2 = await run();
+
+    // Wait for first to settle
+    await promise1.catch(() => {});
+
+    expect(callCount).toBe(2);
+    expect(result2).toBe('result2');
+    expect(data.get()).toBe('result2');
+  });
+
+  test('run() should handle rapid successive calls correctly', async () => {
+    let completed = [];
+    const getter = vi.fn(async function (id) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (this.signal.aborted) return null;
+      completed.push(id);
+      return id;
+    });
+
+    const { data, run } = Cell.async(getter);
+
+    // Start multiple runs rapidly - only the last should succeed
+    const results = await Promise.all([
+      run('first'),
+      run('second'),
+      run('third'),
+    ]);
+
+    expect(results).toEqual([null, null, 'third']); // First two aborted
+    expect(data.get()).toBe('third'); // Last one wins
+    expect(completed).toEqual(['third']); // Only last completes
+  });
+
+  test('AbortSignal should be properly aborted on new run()', async () => {
+    let abortedSignals = [];
+    const getter = vi.fn(async function (value) {
+      this.signal.addEventListener('abort', () => abortedSignals.push(value));
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return value;
+    });
+
+    const { run } = Cell.async(getter);
+
+    // Start first run
+    run(1);
+
+    // Start second run before first completes
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    await run(2);
+
+    expect(abortedSignals).toContain(1);
+  });
 });
 
 describe('Effect options', () => {
@@ -857,7 +982,7 @@ describe('Effect options', () => {
     expect(() => {
       cell.listen(callback, { name: 'test' });
     }).toThrowError(
-      'An effect with the name "test" is already listening to this cell.'
+      'An effect with the name "test" is already listening to this cell.',
     );
   });
 
@@ -911,7 +1036,7 @@ describe('Cell options', () => {
       { a: 1, b: 2 },
       {
         equals: (a, b) => a.a === b.a && a.b === b.b,
-      }
+      },
     );
     const callback = vi.fn();
     cell.listen(callback);

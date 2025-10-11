@@ -119,6 +119,31 @@ data.listen((userData) => {
 run(123); // Triggers the async operation
 ```
 
+#### Automatic Abort of Previous Operations
+
+When you call `run()` multiple times on the same async cell, any previous ongoing async operations are automatically aborted. This prevents race conditions and ensures that only the result of the latest `run()` call is applied.
+
+Additionally, the getter function receives an `AbortSignal` via `this.signal`, which you can use to cancel long-running operations or check for abortion:
+
+```javascript
+const fetchUser = Cell.async(async function (userId) {
+  const response = await fetch(`https://api.example.com/users/${userId}`, {
+    signal: this.signal, // Pass the abort signal to fetch
+  });
+  return response.json();
+});
+
+const { data, run } = fetchUser;
+
+// Start first request
+run(123);
+
+// Start second request - this aborts the first
+run(456);
+
+// Only the result of the second request (user 456) will be applied
+```
+
 ### 7. Flattening
 
 Cells offers utility functions to work with nested cell structures, making it easier to handle complex state shapes:
