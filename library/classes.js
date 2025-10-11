@@ -663,11 +663,12 @@ export class Cell {
       data.set(null);
 
       await Cell.batch(async () => {
+        const currentController = controller;
         try {
           initialInput = input;
           const _input = /** @type {X} */ (input);
-          const result = await getter.bind(controller)(_input);
-          if (controller?.signal.aborted) return;
+          const result = await getter.bind(currentController)(_input);
+          if (currentController?.signal.aborted) return;
           data.set(result);
         } catch (e) {
           if (e instanceof Error) {
@@ -687,15 +688,20 @@ export class Cell {
      * @param {boolean} [changeLoadingState]
      */
     async function reload(newInput, changeLoadingState = true) {
+      if (controller) controller.abort();
+      controller = new AbortController();
+
       if (changeLoadingState) {
         pending.set(true);
       }
 
       await Cell.batch(async () => {
+        const currentController = controller;
         try {
-          const result = await getter(
+          const result = await getter.bind(currentController)(
             /** @type {X} */ (newInput ?? initialInput),
           );
+          if (currentController?.signal.aborted) return;
           data.set(result);
         } catch (e) {
           if (e instanceof Error) {
