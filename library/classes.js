@@ -11,19 +11,20 @@
  * @property {SourceCell<Error | null>} error
  * Represents the errors returned by the asynchronous request, if any.
  *
- * @property {Getter extends (...args: infer P) => any ? P['length'] extends 0 ? SimplePromiseFn: PromiseFnWithArgs<P> : SimplePromiseFn} run
+ * @property {Getter extends (...args: infer P) => any ? P['length'] extends 0 ? SimplePromiseFn<Output>: PromiseFnWithArgs<P, Output> : SimplePromiseFn<Output>} run
  * Triggers the asynchronous request.
  *
  * @property {(newInput?: Input, changeLoadingState?: boolean) => Promise<void>} reload Triggers the asynchronous request again with an optional new input and optionally changes the loading state.
  */
 
 /**
- * @typedef {() => Promise<void>} SimplePromiseFn
+ * @template Output
+ * @typedef {() => Promise<Output | null>} SimplePromiseFn
  */
 
 /**
- * @template {Array<any>} Args
- * @typedef {(...args: Args) => Promise<void>} PromiseFnWithArgs
+ * @template {Array<any>} Args, Output
+ * @typedef {(...args: Args) => Promise<Output | null>} PromiseFnWithArgs
  */
 
 /**
@@ -650,8 +651,13 @@ export class Cell {
 
     /** @type {X | undefined} */
     let initialInput;
+    /** @type {AbortController | undefined} */
+    let controller;
 
     async function run(input = initialInput) {
+      if (controller) controller.abort();
+      controller = new AbortController();
+
       pending.set(true);
       error.set(null);
       data.set(null);
@@ -659,7 +665,9 @@ export class Cell {
       await Cell.batch(async () => {
         try {
           initialInput = input;
-          const result = await getter(/** @type {X} */ (input));
+          const _input = /** @type {X} */ (input);
+          const result = await getter.bind(controller)(_input);
+          if (controller?.signal.aborted) return;
           data.set(result);
         } catch (e) {
           if (e instanceof Error) {

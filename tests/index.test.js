@@ -22,7 +22,7 @@ describe('Cells', () => {
         a: 1,
         b: { c: 2, d: 3 },
       },
-      { deep: true }
+      { deep: true },
     );
     const callback = vi.fn();
     cell.listen(callback);
@@ -391,7 +391,7 @@ describe('Derived cells', () => {
     expect(callback).toHaveBeenCalledWith(null);
 
     const derivedUndefined = Cell.derived(() =>
-      cell.get() > 0 ? cell.get() : undefined
+      cell.get() > 0 ? cell.get() : undefined,
     );
     expect(derivedUndefined.get()).toBeUndefined();
     const callbackUndefined = vi.fn();
@@ -792,6 +792,42 @@ describe('Cell.async', () => {
     expect(data.get()).toBe(true);
     expect(pending.get()).toBe(false);
   });
+
+  test('Should abort previous async operations when a new one starts', async () => {
+    const getter = vi.fn(async function (value) {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => resolve(value * 2), 100);
+        this.signal.addEventListener('abort', () => {
+          clearTimeout(timeout);
+          reject(new Error('Aborted'));
+        });
+      });
+      return value * 2;
+    });
+
+    const { data, run, error } = Cell.async(getter);
+
+    const promise1 = run(5);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const promise2 = run(10);
+
+    await Promise.allSettled([promise1, promise2]);
+
+    expect(data.get()).toBe(20); // 10 * 2
+    expect(getter).toHaveBeenCalledTimes(2);
+  });
+
+  test('Should pass AbortSignal to getter function', async () => {
+    const getter = vi.fn(async function (value) {
+      expect(this.signal).toBeInstanceOf(AbortSignal);
+      return value;
+    });
+
+    const { data, run } = Cell.async(getter);
+    await run(42);
+    expect(data.get()).toBe(42);
+    expect(getter).toHaveBeenCalledWith(42);
+  });
 });
 
 describe('Effect options', () => {
@@ -857,7 +893,7 @@ describe('Effect options', () => {
     expect(() => {
       cell.listen(callback, { name: 'test' });
     }).toThrowError(
-      'An effect with the name "test" is already listening to this cell.'
+      'An effect with the name "test" is already listening to this cell.',
     );
   });
 
@@ -911,7 +947,7 @@ describe('Cell options', () => {
       { a: 1, b: 2 },
       {
         equals: (a, b) => a.a === b.a && a.b === b.b,
-      }
+      },
     );
     const callback = vi.fn();
     cell.listen(callback);
