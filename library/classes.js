@@ -679,6 +679,7 @@ export class Cell {
           pending.set(false);
         }
       });
+      return data.get();
     }
 
     /**
@@ -690,22 +691,24 @@ export class Cell {
         pending.set(true);
       }
 
-      try {
-        const result = await getter(
-          /** @type {X} */ (newInput ?? initialInput),
-        );
-        data.set(result);
-      } catch (e) {
-        if (e instanceof Error) {
-          error.set(e);
-        } else {
-          throw e;
+      await Cell.batch(async () => {
+        try {
+          const result = await getter(
+            /** @type {X} */ (newInput ?? initialInput),
+          );
+          data.set(result);
+        } catch (e) {
+          if (e instanceof Error) {
+            error.set(e);
+          } else {
+            throw e;
+          }
+        } finally {
+          if (changeLoadingState) {
+            pending.set(false);
+          }
         }
-      } finally {
-        if (changeLoadingState) {
-          pending.set(false);
-        }
-      }
+      });
     }
 
     return {
