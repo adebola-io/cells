@@ -676,9 +676,8 @@ export class Cell {
           } else {
             throw e;
           }
-        } finally {
-          pending.set(false);
         }
+        pending.set(false);
       });
       return data.get();
     }
@@ -709,10 +708,9 @@ export class Cell {
           } else {
             throw e;
           }
-        } finally {
-          if (changeLoadingState) {
-            pending.set(false);
-          }
+        }
+        if (changeLoadingState) {
+          pending.set(false);
         }
       });
     }
