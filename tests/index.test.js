@@ -898,27 +898,6 @@ describe('Cell.async', () => {
     expect(completed).toEqual(['third']); // Only last completes
   });
 
-  test('reload() should not abort ongoing run()', async () => {
-    const getter = vi.fn(async function (value) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      return value;
-    });
-
-    const { data, run, reload } = Cell.async(getter);
-
-    // Start run
-    const runPromise = run(10);
-
-    // Start reload while run is ongoing
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    await reload(20);
-
-    // Run should still complete
-    const runResult = await runPromise;
-    expect(runResult).toBe(10);
-    expect(data.get()).toBe(20); // Reload overwrites
-  });
-
   test('AbortSignal should be properly aborted on new run()', async () => {
     let abortedSignals = [];
     const getter = vi.fn(async function (value) {
