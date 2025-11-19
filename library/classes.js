@@ -254,8 +254,9 @@ export class LocalContext {
   effects = new Map();
 
   destroy() {
-    const index = CONTEXT_STACK.indexOf(this);
-    if (index !== -1) CONTEXT_STACK.splice(index, 1);
+    if (CONTEXT_STACK.includes(this)) {
+      throw new Error('Cannot destroy a context inside its callback.');
+    }
 
     for (const [derivation, sources] of this.derivationSourceMap) {
       for (const source of sources) {
