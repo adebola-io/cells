@@ -122,7 +122,6 @@ class InternallyWeakSet {
  */
 
 const GlobalTrackingContext = {};
-const OpenTrackingContexts = new Set([GlobalTrackingContext]);
 let CurrentTrackingContext = GlobalTrackingContext;
 
 /**
@@ -134,7 +133,7 @@ const UPDATE_BUFFER = new Set();
 let IS_UPDATING = false;
 
 /** @type {object[]} */
-const CONTEXT_STACK = [];
+const CONTEXT_STACK = [GlobalTrackingContext];
 
 /** @type {Error[]} */
 const cellErrors = [];
@@ -300,7 +299,6 @@ function addEffectToCurrentContext(cell, effectContainer) {
  * @param {LocalContext} context
  */
 function pushLocalContext(context) {
-  OpenTrackingContexts.add(context);
   CONTEXT_STACK.push(context);
   CurrentTrackingContext = context;
 }
