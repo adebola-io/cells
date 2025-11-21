@@ -161,15 +161,9 @@ function triggerUpdate() {
     // Run computed dependents.
     const computedDependents = cell.derivations;
     for (const computedCell of computedDependents) {
-      if (BATCH_NESTING_LEVEL > 0) {
-        BATCHED_EFFECTS.set(() => {
-          if (!computedCell.initialized) return;
-          UPDATE_BUFFER.add(computedCell);
-        }, undefined);
-      } else {
-        if (!computedCell.initialized) continue;
-        UPDATE_BUFFER.add(computedCell);
-      }
+      if (BATCH_NESTING_LEVEL > 0)
+        BATCHED_EFFECTS.set(() => UPDATE_BUFFER.add(computedCell), undefined);
+      else UPDATE_BUFFER.add(computedCell);
     }
 
     // @ts-expect-error: Cell.update is protected.
@@ -715,10 +709,6 @@ export class Cell {
   static flatten = (value) => {
     if (value instanceof Cell) {
       if (value instanceof DerivedCell) {
-        if (value.initialized) {
-          return Cell.flatten(value.wvalue);
-        }
-        value.setValue(value.computedFn());
         return Cell.flatten(value.wvalue);
       }
       return Cell.flatten(value.wvalue);
@@ -885,8 +875,10 @@ export class DerivedCell extends Cell {
       ACTIVE_DERIVED_CTX.pop();
       return value;
     };
+
+    this.setValue(derivationWrapper());
     this.computedFn = /** @type {() => T} */ (derivationWrapper);
-    this.initialized = false;
+    throwAnyErrors();
   }
 
   /** @type {() => T} */
@@ -898,41 +890,7 @@ export class DerivedCell extends Cell {
    * @returns {T} The value of the Cell.
    */
   get() {
-    if (!this.initialized) {
-      this.initialized = true;
-      this.setValue(this.computedFn());
-      throwAnyErrors();
-    }
     return this.revalued;
-  }
-
-  /**
-   * Listens for changes to the cell, initializing the value if not already done.
-   * @param {(newValue: T) => void} callback - The function to call when the cell's value changes.
-   * @param {object} [options] - Optional configuration for listening.
-   */
-  listen(callback, options) {
-    if (!this.initialized) {
-      this.initialized = true;
-      this.setValue(this.computedFn());
-      throwAnyErrors();
-    }
-    return super.listen(callback, options);
-  }
-
-  /**
-   * Runs the callback and sets up a listener, initializing the cell's value if not already done.
-   * @param {(newValue: T) => void} callback - The function to call when the cell's value changes.
-   * @param {object} [options] - Optional configuration for listening and running.
-   * @returns {*} The result of the parent class's runAndListen method.
-   */
-  runAndListen(callback, options) {
-    if (!this.initialized) {
-      this.initialized = true;
-      this.setValue(this.computedFn());
-      throwAnyErrors();
-    }
-    return super.runAndListen(callback, options);
   }
 }
 
