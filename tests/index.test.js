@@ -158,6 +158,20 @@ describe('Effects', () => {
 
     expect(callback).toHaveBeenCalledTimes(1);
   });
+
+  test('Cells should have updated values when read in effects', () => {
+    const cell = Cell.source(1);
+    const derivedCell = Cell.derived(() => cell.get() * 2);
+
+    let message = '';
+    cell.listen(() => {
+      message = `The derived cell is ${derivedCell.get()}`;
+    });
+
+    cell.set(2);
+
+    expect(message).toEqual('The derived cell is 4');
+  });
 });
 
 describe('Derived cells', () => {

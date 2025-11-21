@@ -127,9 +127,9 @@ let CurrentTrackingContext = GlobalTrackingContext;
 /**
  * Tracks cells that need to be updated during the update cycle.
  * Cells are added to this stack to be processed and updated sequentially.
- * @type {Set<Cell<any>>}
+ * @type {Array<Cell<any>>}
  */
-const UPDATE_BUFFER = new Set();
+const UPDATE_BUFFER = [];
 let IS_UPDATING = false;
 
 /** @type {object[]} */
@@ -149,11 +149,15 @@ const cellErrors = [];
  */
 function triggerUpdate() {
   IS_UPDATING = true;
-  for (const cell of UPDATE_BUFFER) {
+  for (let i = 0; i < UPDATE_BUFFER.length; i++) {
+    const cell = UPDATE_BUFFER[i];
     if (cell instanceof DerivedCell) {
       const newValue = cell.computedFn();
       // @ts-expect-error: wvalue is protected.
-      if (deepEqual(cell.wvalue, newValue)) continue;
+      if (deepEqual(cell.wvalue, newValue)) {
+        cell.__scheduled = false;
+        continue;
+      }
       // @ts-expect-error: wvalue is protected.
       cell.wvalue = newValue;
     }
@@ -161,21 +165,20 @@ function triggerUpdate() {
     // Run computed dependents.
     const computedDependents = cell.derivations;
     for (const computedCell of computedDependents) {
-      if (BATCH_NESTING_LEVEL > 0) {
-        BATCHED_EFFECTS.set(() => {
-          if (!computedCell.initialized) return;
-          UPDATE_BUFFER.add(computedCell);
-        }, undefined);
-      } else {
-        if (!computedCell.initialized) continue;
-        UPDATE_BUFFER.add(computedCell);
-      }
-    }
+      if (!computedCell.initialized || computedCell.__scheduled) continue;
 
-    // @ts-expect-error: Cell.update is protected.
-    cell.update();
+      if (BATCH_NESTING_LEVEL > 0)
+        BATCHED_EFFECTS.set(() => UPDATE_BUFFER.push(computedCell), undefined);
+      else UPDATE_BUFFER.push(computedCell);
+      computedCell.__scheduled = true;
+    }
   }
-  UPDATE_BUFFER.clear();
+  for (const cell of UPDATE_BUFFER) {
+    // @ts-expect-error: Cell.update is protected.
+    if (cell.__scheduled) cell.update();
+    cell.__scheduled = false;
+  }
+  UPDATE_BUFFER.length = 0;
   IS_UPDATING = false;
   throwAnyErrors();
 }
@@ -329,6 +332,8 @@ function popLocalContext() {
  * ```
  */
 export class Cell {
+  __scheduled = false;
+
   /**
    * @type {Array<Effect<T>>}
    */
@@ -999,7 +1004,8 @@ export class SourceCell extends Cell {
     if (isEqual) return;
 
     this.setValue(value);
-    UPDATE_BUFFER.add(this);
+    this.__scheduled = true;
+    UPDATE_BUFFER.push(this);
     if (!IS_UPDATING) triggerUpdate();
   }
 
@@ -1032,7 +1038,8 @@ export class SourceCell extends Cell {
             return (...args) => {
               // @ts-expect-error: Direct access is faster than Reflection here.
               const result = target[prop](...args);
-              UPDATE_BUFFER.add(this);
+              UPDATE_BUFFER.push(this);
+              this.__scheduled = true;
               if (!IS_UPDATING) triggerUpdate();
               return result;
             };
@@ -1055,7 +1062,8 @@ export class SourceCell extends Cell {
         if (!isEqual) {
           // @ts-expect-error: dynamic object access.
           target[prop] = value;
-          UPDATE_BUFFER.add(this);
+          UPDATE_BUFFER.push(this);
+          this.__scheduled = true;
           if (!IS_UPDATING) {
             triggerUpdate();
           }
