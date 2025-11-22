@@ -1103,56 +1103,62 @@ function deepEqual(a, b) {
   if (a === b) return true;
 
   if (
-    typeof a !== typeof b ||
-    typeof a !== 'object' ||
     a === null ||
-    b === null
-  )
+    typeof a !== 'object' ||
+    b === null ||
+    typeof b !== 'object'
+  ) {
     return false;
-
-  if (a instanceof Date) {
-    if (!(b instanceof Date)) {
-      return false;
-    }
-
-    if (a.getTime() !== b.getTime()) {
-      return false;
-    }
   }
 
-  if (a instanceof Map) {
-    if (!(b instanceof Map)) {
-      return false;
-    }
+  if (a.constructor !== b.constructor) return false;
 
-    if (a.size !== b.size) {
-      return false;
-    }
-    for (const [key, value] of a.entries()) {
-      if (!deepEqual(b.get(key), value)) {
+  if (a instanceof Date) return a.getTime() === b.getTime();
+
+  if (a instanceof RegExp) return a.source === b.source && a.flags === b.flags;
+
+  if (a instanceof Map) {
+    if (a.size !== b.size) return false;
+    for (const [key, value] of a) {
+      if (!b.has(key) || !deepEqual(value, b.get(key))) {
         return false;
       }
     }
+    return true;
+  }
+
+  if (a instanceof Set) {
+    if (a.size !== b.size) return false;
+    for (const value of a) {
+      if (!b.has(value)) return false;
+    }
+    return true;
   }
 
   if (Array.isArray(a)) {
-    const aLength = a.length;
-    if (!Array.isArray(b) || aLength !== b.length) return false;
+    const length = a.length;
+    if (length !== b.length) return false;
 
-    for (let i = 0; i < aLength; i++) {
+    for (let i = 0; i < length; i++) {
       if (!deepEqual(a[i], b[i])) return false;
     }
-  } else {
-    const keysA = Object.keys(a);
-    const keysB = Object.keys(b);
-    const keysALength = keysA.length;
-    if (keysALength !== keysB.length) return false;
+    return true;
+  }
 
-    for (let i = 0; i < keysALength; i++) {
-      const key = keysA[i];
-      if (a === b) return true;
-      if (!(key in b) || !deepEqual(a[key], b[key])) return false;
+  const keysA = Object.keys(a);
+  const length = keysA.length;
+
+  if (Object.keys(b).length !== length) return false;
+
+  for (let i = 0; i < length; i++) {
+    const key = keysA[i];
+    if (
+      !Object.prototype.hasOwnProperty.call(b, key) ||
+      !deepEqual(a[key], b[key])
+    ) {
+      return false;
     }
   }
+
   return true;
 }
