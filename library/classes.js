@@ -131,12 +131,6 @@ let CurrentTrackingContext = GlobalTrackingContext;
  * @type {Array<Cell<any>>}
  */
 const UPDATE_BUFFER = [];
-/**
- * Edge case: It is possible, due to control branches in the derivations
- * to have a cell with a bigger depth come before one that should occur naturally.
- * @type {Array<DerivedCell<any>>}
- */
-const DEFERRED_NODES = [];
 let IS_UPDATING = false;
 
 /** @type {object[]} */
@@ -161,13 +155,14 @@ function triggerUpdate() {
     const cell = UPDATE_BUFFER[i];
 
     if (cell instanceof DerivedCell) {
-      if (cell.depth > currentDepth + 1 && !DEFERRED_NODES.includes(cell)) {
-        DEFERRED_NODES.push(cell);
+      const { depth } = cell;
+      if (depth > currentDepth + 1) {
+        // Move nodes with higher depths to the end of the array so they
+        // are processed last.
         UPDATE_BUFFER.push(cell);
         continue;
       }
-
-      currentDepth = cell.depth;
+      currentDepth = depth;
 
       const newValue = cell.computedFn();
       // @ts-expect-error: wvalue is protected.
@@ -189,6 +184,11 @@ function triggerUpdate() {
       else UPDATE_BUFFER.push(computedCell);
       computedCell.__scheduled = true;
     }
+    // Check the last cell.
+    const last = UPDATE_BUFFER[UPDATE_BUFFER.length - 1];
+    if (last instanceof DerivedCell && last.depth - 1 > currentDepth) {
+      currentDepth = last.depth - 1;
+    }
   }
   for (const cell of UPDATE_BUFFER) {
     // @ts-expect-error: Cell.update is protected.
@@ -196,7 +196,6 @@ function triggerUpdate() {
     cell.__scheduled = false;
   }
   UPDATE_BUFFER.length = 0;
-  DEFERRED_NODES.length = 0;
   IS_UPDATING = false;
   throwAnyErrors();
 }
