@@ -124,6 +124,8 @@ class InternallyWeakSet {
 
 const GlobalTrackingContext = {};
 let CurrentTrackingContext = GlobalTrackingContext;
+const Depth = Symbol();
+const IsScheduled = Symbol();
 
 /**
  * Tracks cells that need to be updated during the update cycle.
@@ -155,7 +157,7 @@ function triggerUpdate() {
     const cell = UPDATE_BUFFER[i];
 
     if (cell instanceof DerivedCell) {
-      const { depth } = cell;
+      const depth = cell[Depth];
       if (depth > currentDepth + 1) {
         // Move nodes with higher depths to the end of the array so they
         // are processed last.
@@ -167,8 +169,7 @@ function triggerUpdate() {
       const newValue = cell.computedFn();
       // @ts-expect-error: wvalue is protected.
       if (deepEqual(cell.wvalue, newValue)) {
-        // @ts-expect-error: _ is protected.
-        cell._ = false;
+        cell[IsScheduled] = false;
         continue;
       }
       // @ts-expect-error: wvalue is protected.
@@ -178,26 +179,23 @@ function triggerUpdate() {
     // Run computed dependents.
     const computedDependents = cell.derivations;
     for (const computedCell of computedDependents) {
-      // @ts-expect-error: _ is protected.
-      if (computedCell._) continue;
+      if (computedCell[IsScheduled]) continue;
 
       if (BATCH_NESTING_LEVEL > 0)
         BATCHED_EFFECTS.set(() => UPDATE_BUFFER.push(computedCell), undefined);
       else UPDATE_BUFFER.push(computedCell);
-      // @ts-expect-error: _ is protected.
-      computedCell._ = true;
+      computedCell[IsScheduled] = true;
     }
     // Check the last cell.
     const last = UPDATE_BUFFER[UPDATE_BUFFER.length - 1];
-    if (last instanceof DerivedCell && last.depth - 1 > currentDepth) {
-      currentDepth = last.depth - 1;
+    if (last instanceof DerivedCell && last[Depth] - 1 > currentDepth) {
+      currentDepth = last[Depth] - 1;
     }
   }
   for (const cell of UPDATE_BUFFER) {
     // @ts-expect-error: Cell.update is protected.
-    if (cell._) cell.update();
-    // @ts-expect-error: _ is protected.
-    cell._ = false;
+    if (cell[IsScheduled]) cell.update();
+    cell[IsScheduled] = false;
   }
   UPDATE_BUFFER.length = 0;
   IS_UPDATING = false;
@@ -356,7 +354,7 @@ export class Cell {
   /**
    * @protected
    */
-  _ = false;
+  [IsScheduled] = false;
 
   /**
    * @type {Array<Effect<T>>}
@@ -434,7 +432,9 @@ export class Cell {
     if (isAlreadySubscribed) {
       return this.wvalue;
     }
-    if (this instanceof DerivedCell && this.depth > ctx[1]) ctx[1] = this.depth;
+    if (this instanceof DerivedCell && this[Depth] > ctx[1]) {
+      ctx[1] = this[Depth];
+    }
     this.derivations.add(currentlyComputedValue);
     if (CurrentTrackingContext instanceof LocalContext) {
       CurrentTrackingContext.derivationSourceMap
@@ -890,7 +890,8 @@ export class Cell {
  * @extends {Cell<T>}
  */
 export class DerivedCell extends Cell {
-  depth = 0;
+  [Depth] = 0;
+
   /**
    * @param {() => T} computedFn - A function that generates the value of the computed.
    */
@@ -912,7 +913,7 @@ export class DerivedCell extends Cell {
       const [, depth] = /** @type {[this, number]} */ (
         ACTIVE_DERIVED_CTX.pop()
       );
-      if (depth + 1 > this.depth) this.depth = depth + 1;
+      if (depth + 1 > this[Depth]) this[Depth] = depth + 1;
       return value;
     };
 
@@ -997,7 +998,7 @@ export class SourceCell extends Cell {
     if (isEqual) return;
 
     this.setValue(value);
-    this._ = true;
+    this[IsScheduled] = true;
     UPDATE_BUFFER.push(this);
     if (!IS_UPDATING) triggerUpdate();
   }
@@ -1032,7 +1033,7 @@ export class SourceCell extends Cell {
               // @ts-expect-error: Direct access is faster than Reflection here.
               const result = target[prop](...args);
               UPDATE_BUFFER.push(this);
-              this._ = true;
+              this[IsScheduled] = true;
               if (!IS_UPDATING) triggerUpdate();
               return result;
             };
@@ -1056,7 +1057,7 @@ export class SourceCell extends Cell {
           // @ts-expect-error: dynamic object access.
           target[prop] = value;
           UPDATE_BUFFER.push(this);
-          this._ = true;
+          this[IsScheduled] = true;
           if (!IS_UPDATING) {
             triggerUpdate();
           }
