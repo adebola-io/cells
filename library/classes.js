@@ -68,9 +68,10 @@ let BATCH_NESTING_LEVEL = 0;
 let BATCHED_EFFECTS = new Map();
 
 /**
- * A value representing the computed values that are currently being calculated.
+ * A value representing the computed values that are currently being calculated,
+ * and the largest depth encountered.
  * It is an array so it can keep track of nested computed values.
- * @type {DerivedCell<any>[]}
+ * @type {[DerivedCell<any>, number][]}
  */
 const ACTIVE_DERIVED_CTX = [];
 
@@ -130,6 +131,12 @@ let CurrentTrackingContext = GlobalTrackingContext;
  * @type {Array<Cell<any>>}
  */
 const UPDATE_BUFFER = [];
+/**
+ * Edge case: It is possible, due to control branches in the derivations
+ * to have a cell with a bigger depth come before one that should occur naturally.
+ * @type {Array<DerivedCell<any>>}
+ */
+const DEFERRED_NODES = [];
 let IS_UPDATING = false;
 
 /** @type {object[]} */
@@ -149,9 +156,19 @@ const cellErrors = [];
  */
 function triggerUpdate() {
   IS_UPDATING = true;
+  let currentDepth = 0;
   for (let i = 0; i < UPDATE_BUFFER.length; i++) {
     const cell = UPDATE_BUFFER[i];
+
     if (cell instanceof DerivedCell) {
+      if (cell.depth > currentDepth + 1 && !DEFERRED_NODES.includes(cell)) {
+        DEFERRED_NODES.push(cell);
+        UPDATE_BUFFER.push(cell);
+        continue;
+      }
+
+      currentDepth = cell.depth;
+
       const newValue = cell.computedFn();
       // @ts-expect-error: wvalue is protected.
       if (deepEqual(cell.wvalue, newValue)) {
@@ -179,6 +196,7 @@ function triggerUpdate() {
     cell.__scheduled = false;
   }
   UPDATE_BUFFER.length = 0;
+  DEFERRED_NODES.length = 0;
   IS_UPDATING = false;
   throwAnyErrors();
 }
@@ -345,7 +363,7 @@ export class Cell {
   constructor() {
     if (new.target === Cell) {
       throw new Error(
-        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.'
+        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.',
       );
     }
     /**
@@ -399,17 +417,18 @@ export class Cell {
    * @protected @type {T}
    */
   get revalued() {
-    const currentlyComputedValue =
-      ACTIVE_DERIVED_CTX[ACTIVE_DERIVED_CTX.length - 1];
+    const ctx = ACTIVE_DERIVED_CTX[ACTIVE_DERIVED_CTX.length - 1];
 
-    if (currentlyComputedValue === undefined) {
+    if (ctx === undefined) {
       return this.wvalue;
     }
 
+    const [currentlyComputedValue] = ctx;
     const isAlreadySubscribed = this.derivations.has(currentlyComputedValue);
     if (isAlreadySubscribed) {
       return this.wvalue;
     }
+    if (this instanceof DerivedCell && this.depth > ctx[1]) ctx[1] = this.depth;
     this.derivations.add(currentlyComputedValue);
     if (CurrentTrackingContext instanceof LocalContext) {
       CurrentTrackingContext.derivationSourceMap
@@ -445,7 +464,7 @@ export class Cell {
 
     if (options?.name && this.isListeningTo(options.name)) {
       throw new Error(
-        `An effect with the name "${options.name}" is already listening to this cell.`
+        `An effect with the name "${options.name}" is already listening to this cell.`,
       );
     }
 
@@ -830,7 +849,7 @@ export class Cell {
         const currentController = controller;
         try {
           const result = await getter.bind(currentController)(
-            /** @type {X} */ (newInput ?? initialInput)
+            /** @type {X} */ (newInput ?? initialInput),
           );
           if (currentController?.signal.aborted) return;
           data.set(result);
@@ -865,6 +884,7 @@ export class Cell {
  * @extends {Cell<T>}
  */
 export class DerivedCell extends Cell {
+  depth = 0;
   /**
    * @param {() => T} computedFn - A function that generates the value of the computed.
    */
@@ -876,14 +896,17 @@ export class DerivedCell extends Cell {
 
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
-      ACTIVE_DERIVED_CTX.push(this);
+      ACTIVE_DERIVED_CTX.push([this, 0]);
       let value = this.wvalue;
       try {
         value = computedFn();
       } catch (e) {
         if (e instanceof Error) cellErrors.push(e);
       }
-      ACTIVE_DERIVED_CTX.pop();
+      const [, depth] = /** @type {[this, number]} */ (
+        ACTIVE_DERIVED_CTX.pop()
+      );
+      if (depth + 1 > this.depth) this.depth = depth + 1;
       return value;
     };
 
