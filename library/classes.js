@@ -167,7 +167,8 @@ function triggerUpdate() {
       const newValue = cell.computedFn();
       // @ts-expect-error: wvalue is protected.
       if (deepEqual(cell.wvalue, newValue)) {
-        cell.__scheduled = false;
+        // @ts-expect-error: _ is protected.
+        cell._ = false;
         continue;
       }
       // @ts-expect-error: wvalue is protected.
@@ -177,12 +178,14 @@ function triggerUpdate() {
     // Run computed dependents.
     const computedDependents = cell.derivations;
     for (const computedCell of computedDependents) {
-      if (computedCell.__scheduled) continue;
+      // @ts-expect-error: _ is protected.
+      if (computedCell._) continue;
 
       if (BATCH_NESTING_LEVEL > 0)
         BATCHED_EFFECTS.set(() => UPDATE_BUFFER.push(computedCell), undefined);
       else UPDATE_BUFFER.push(computedCell);
-      computedCell.__scheduled = true;
+      // @ts-expect-error: _ is protected.
+      computedCell._ = true;
     }
     // Check the last cell.
     const last = UPDATE_BUFFER[UPDATE_BUFFER.length - 1];
@@ -192,8 +195,9 @@ function triggerUpdate() {
   }
   for (const cell of UPDATE_BUFFER) {
     // @ts-expect-error: Cell.update is protected.
-    if (cell.__scheduled) cell.update();
-    cell.__scheduled = false;
+    if (cell._) cell.update();
+    // @ts-expect-error: _ is protected.
+    cell._ = false;
   }
   UPDATE_BUFFER.length = 0;
   IS_UPDATING = false;
@@ -349,7 +353,10 @@ function popLocalContext() {
  * ```
  */
 export class Cell {
-  __scheduled = false;
+  /**
+   * @protected
+   */
+  _ = false;
 
   /**
    * @type {Array<Effect<T>>}
@@ -990,7 +997,7 @@ export class SourceCell extends Cell {
     if (isEqual) return;
 
     this.setValue(value);
-    this.__scheduled = true;
+    this._ = true;
     UPDATE_BUFFER.push(this);
     if (!IS_UPDATING) triggerUpdate();
   }
@@ -1025,7 +1032,7 @@ export class SourceCell extends Cell {
               // @ts-expect-error: Direct access is faster than Reflection here.
               const result = target[prop](...args);
               UPDATE_BUFFER.push(this);
-              this.__scheduled = true;
+              this._ = true;
               if (!IS_UPDATING) triggerUpdate();
               return result;
             };
@@ -1049,7 +1056,7 @@ export class SourceCell extends Cell {
           // @ts-expect-error: dynamic object access.
           target[prop] = value;
           UPDATE_BUFFER.push(this);
-          this.__scheduled = true;
+          this._ = true;
           if (!IS_UPDATING) {
             triggerUpdate();
           }
