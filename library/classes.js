@@ -68,9 +68,10 @@ let BATCH_NESTING_LEVEL = 0;
 let BATCHED_EFFECTS = new Map();
 
 /**
- * A value representing the computed values that are currently being calculated.
+ * A value representing the computed values that are currently being calculated,
+ * and the largest depth encountered.
  * It is an array so it can keep track of nested computed values.
- * @type {DerivedCell<any>[]}
+ * @type {[DerivedCell<any>, number][]}
  */
 const ACTIVE_DERIVED_CTX = [];
 
@@ -123,13 +124,15 @@ class InternallyWeakSet {
 
 const GlobalTrackingContext = {};
 let CurrentTrackingContext = GlobalTrackingContext;
+const Depth = Symbol();
+const IsScheduled = Symbol();
 
 /**
  * Tracks cells that need to be updated during the update cycle.
  * Cells are added to this stack to be processed and updated sequentially.
- * @type {Set<Cell<any>>}
+ * @type {Array<Cell<any>>}
  */
-const UPDATE_BUFFER = new Set();
+const UPDATE_BUFFER = [];
 let IS_UPDATING = false;
 
 /** @type {object[]} */
@@ -149,11 +152,26 @@ const cellErrors = [];
  */
 function triggerUpdate() {
   IS_UPDATING = true;
-  for (const cell of UPDATE_BUFFER) {
+  let currentDepth = 0;
+  for (let i = 0; i < UPDATE_BUFFER.length; i++) {
+    const cell = UPDATE_BUFFER[i];
+
     if (cell instanceof DerivedCell) {
+      const depth = cell[Depth];
+      if (depth > currentDepth + 1) {
+        // Move nodes with higher depths to the end of the array so they
+        // are processed last.
+        UPDATE_BUFFER.push(cell);
+        continue;
+      }
+      currentDepth = depth;
+
       const newValue = cell.computedFn();
       // @ts-expect-error: wvalue is protected.
-      if (deepEqual(cell.wvalue, newValue)) continue;
+      if (deepEqual(cell.wvalue, newValue)) {
+        cell[IsScheduled] = false;
+        continue;
+      }
       // @ts-expect-error: wvalue is protected.
       cell.wvalue = newValue;
     }
@@ -161,15 +179,25 @@ function triggerUpdate() {
     // Run computed dependents.
     const computedDependents = cell.derivations;
     for (const computedCell of computedDependents) {
-      if (BATCH_NESTING_LEVEL > 0)
-        BATCHED_EFFECTS.set(() => UPDATE_BUFFER.add(computedCell), undefined);
-      else UPDATE_BUFFER.add(computedCell);
-    }
+      if (computedCell[IsScheduled]) continue;
 
-    // @ts-expect-error: Cell.update is protected.
-    cell.update();
+      if (BATCH_NESTING_LEVEL > 0)
+        BATCHED_EFFECTS.set(() => UPDATE_BUFFER.push(computedCell), undefined);
+      else UPDATE_BUFFER.push(computedCell);
+      computedCell[IsScheduled] = true;
+    }
+    // Check the last cell.
+    const last = UPDATE_BUFFER[UPDATE_BUFFER.length - 1];
+    if (last instanceof DerivedCell && last[Depth] - 1 > currentDepth) {
+      currentDepth = last[Depth] - 1;
+    }
   }
-  UPDATE_BUFFER.clear();
+  for (const cell of UPDATE_BUFFER) {
+    // @ts-expect-error: Cell.update is protected.
+    if (cell[IsScheduled]) cell.update();
+    cell[IsScheduled] = false;
+  }
+  UPDATE_BUFFER.length = 0;
   IS_UPDATING = false;
   throwAnyErrors();
 }
@@ -324,6 +352,11 @@ function popLocalContext() {
  */
 export class Cell {
   /**
+   * @protected
+   */
+  [IsScheduled] = false;
+
+  /**
    * @type {Array<Effect<T>>}
    */
   #effects = [];
@@ -334,7 +367,7 @@ export class Cell {
   constructor() {
     if (new.target === Cell) {
       throw new Error(
-        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.'
+        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.',
       );
     }
     /**
@@ -388,16 +421,19 @@ export class Cell {
    * @protected @type {T}
    */
   get revalued() {
-    const currentlyComputedValue =
-      ACTIVE_DERIVED_CTX[ACTIVE_DERIVED_CTX.length - 1];
+    const ctx = ACTIVE_DERIVED_CTX[ACTIVE_DERIVED_CTX.length - 1];
 
-    if (currentlyComputedValue === undefined) {
+    if (ctx === undefined) {
       return this.wvalue;
     }
 
+    const [currentlyComputedValue] = ctx;
     const isAlreadySubscribed = this.derivations.has(currentlyComputedValue);
     if (isAlreadySubscribed) {
       return this.wvalue;
+    }
+    if (this instanceof DerivedCell && this[Depth] > ctx[1]) {
+      ctx[1] = this[Depth];
     }
     this.derivations.add(currentlyComputedValue);
     if (CurrentTrackingContext instanceof LocalContext) {
@@ -434,7 +470,7 @@ export class Cell {
 
     if (options?.name && this.isListeningTo(options.name)) {
       throw new Error(
-        `An effect with the name "${options.name}" is already listening to this cell.`
+        `An effect with the name "${options.name}" is already listening to this cell.`,
       );
     }
 
@@ -819,7 +855,7 @@ export class Cell {
         const currentController = controller;
         try {
           const result = await getter.bind(currentController)(
-            /** @type {X} */ (newInput ?? initialInput)
+            /** @type {X} */ (newInput ?? initialInput),
           );
           if (currentController?.signal.aborted) return;
           data.set(result);
@@ -854,6 +890,8 @@ export class Cell {
  * @extends {Cell<T>}
  */
 export class DerivedCell extends Cell {
+  [Depth] = 0;
+
   /**
    * @param {() => T} computedFn - A function that generates the value of the computed.
    */
@@ -865,14 +903,17 @@ export class DerivedCell extends Cell {
 
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
-      ACTIVE_DERIVED_CTX.push(this);
+      ACTIVE_DERIVED_CTX.push([this, 0]);
       let value = this.wvalue;
       try {
         value = computedFn();
       } catch (e) {
         if (e instanceof Error) cellErrors.push(e);
       }
-      ACTIVE_DERIVED_CTX.pop();
+      const [, depth] = /** @type {[this, number]} */ (
+        ACTIVE_DERIVED_CTX.pop()
+      );
+      if (depth + 1 > this[Depth]) this[Depth] = depth + 1;
       return value;
     };
 
@@ -957,7 +998,8 @@ export class SourceCell extends Cell {
     if (isEqual) return;
 
     this.setValue(value);
-    UPDATE_BUFFER.add(this);
+    this[IsScheduled] = true;
+    UPDATE_BUFFER.push(this);
     if (!IS_UPDATING) triggerUpdate();
   }
 
@@ -990,7 +1032,8 @@ export class SourceCell extends Cell {
             return (...args) => {
               // @ts-expect-error: Direct access is faster than Reflection here.
               const result = target[prop](...args);
-              UPDATE_BUFFER.add(this);
+              UPDATE_BUFFER.push(this);
+              this[IsScheduled] = true;
               if (!IS_UPDATING) triggerUpdate();
               return result;
             };
@@ -1013,7 +1056,8 @@ export class SourceCell extends Cell {
         if (!isEqual) {
           // @ts-expect-error: dynamic object access.
           target[prop] = value;
-          UPDATE_BUFFER.add(this);
+          UPDATE_BUFFER.push(this);
+          this[IsScheduled] = true;
           if (!IS_UPDATING) {
             triggerUpdate();
           }
@@ -1059,56 +1103,62 @@ function deepEqual(a, b) {
   if (a === b) return true;
 
   if (
-    typeof a !== typeof b ||
-    typeof a !== 'object' ||
     a === null ||
-    b === null
-  )
+    typeof a !== 'object' ||
+    b === null ||
+    typeof b !== 'object'
+  ) {
     return false;
-
-  if (a instanceof Date) {
-    if (!(b instanceof Date)) {
-      return false;
-    }
-
-    if (a.getTime() !== b.getTime()) {
-      return false;
-    }
   }
 
-  if (a instanceof Map) {
-    if (!(b instanceof Map)) {
-      return false;
-    }
+  if (a.constructor !== b.constructor) return false;
 
-    if (a.size !== b.size) {
-      return false;
-    }
-    for (const [key, value] of a.entries()) {
-      if (!deepEqual(b.get(key), value)) {
+  if (a instanceof Date) return a.getTime() === b.getTime();
+
+  if (a instanceof RegExp) return a.source === b.source && a.flags === b.flags;
+
+  if (a instanceof Map) {
+    if (a.size !== b.size) return false;
+    for (const [key, value] of a) {
+      if (!b.has(key) || !deepEqual(value, b.get(key))) {
         return false;
       }
     }
+    return true;
+  }
+
+  if (a instanceof Set) {
+    if (a.size !== b.size) return false;
+    for (const value of a) {
+      if (!b.has(value)) return false;
+    }
+    return true;
   }
 
   if (Array.isArray(a)) {
-    const aLength = a.length;
-    if (!Array.isArray(b) || aLength !== b.length) return false;
+    const length = a.length;
+    if (length !== b.length) return false;
 
-    for (let i = 0; i < aLength; i++) {
+    for (let i = 0; i < length; i++) {
       if (!deepEqual(a[i], b[i])) return false;
     }
-  } else {
-    const keysA = Object.keys(a);
-    const keysB = Object.keys(b);
-    const keysALength = keysA.length;
-    if (keysALength !== keysB.length) return false;
+    return true;
+  }
 
-    for (let i = 0; i < keysALength; i++) {
-      const key = keysA[i];
-      if (a === b) return true;
-      if (!(key in b) || !deepEqual(a[key], b[key])) return false;
+  const keysA = Object.keys(a);
+  const length = keysA.length;
+
+  if (Object.keys(b).length !== length) return false;
+
+  for (let i = 0; i < length; i++) {
+    const key = keysA[i];
+    if (
+      !Object.prototype.hasOwnProperty.call(b, key) ||
+      !deepEqual(a[key], b[key])
+    ) {
+      return false;
     }
   }
+
   return true;
 }

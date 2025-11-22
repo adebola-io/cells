@@ -22,7 +22,7 @@ describe('Cells', () => {
         a: 1,
         b: { c: 2, d: 3 },
       },
-      { deep: true }
+      { deep: true },
     );
     const callback = vi.fn();
     cell.listen(callback);
@@ -158,6 +158,20 @@ describe('Effects', () => {
 
     expect(callback).toHaveBeenCalledTimes(1);
   });
+
+  test('Cells should have updated values when read in effects', () => {
+    const cell = Cell.source(1);
+    const derivedCell = Cell.derived(() => cell.get() * 2);
+
+    let message = '';
+    cell.listen(() => {
+      message = `The derived cell is ${derivedCell.get()}`;
+    });
+
+    cell.set(2);
+
+    expect(message).toEqual('The derived cell is 4');
+  });
 });
 
 describe('Derived cells', () => {
@@ -249,6 +263,7 @@ describe('Derived cells', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2); // 4
     const derived1 = Cell.derived(() => cell2.get() + 1);
+    console.log('derived1:', derived1);
     const derived2 = Cell.derived(() => derived1.get() + cell1.get());
 
     cell2.set(derived2.get());
@@ -391,7 +406,7 @@ describe('Derived cells', () => {
     expect(callback).toHaveBeenCalledWith(null);
 
     const derivedUndefined = Cell.derived(() =>
-      cell.get() > 0 ? cell.get() : undefined
+      cell.get() > 0 ? cell.get() : undefined,
     );
     expect(derivedUndefined.get()).toBeUndefined();
     const callbackUndefined = vi.fn();
@@ -439,6 +454,95 @@ describe('Derived cells', () => {
         return source2.get() * 2;
       }).get(); // Access .get() to trigger computation
     }).toThrow('Errors occurred during cell update cycle');
+  });
+
+  test('More complex derivations across depths', () => {
+    const A = Cell.source(10);
+    const B = Cell.source(12);
+
+    const dependenceC = Cell.source('B');
+    const dependenceD = Cell.source('A');
+
+    const C = Cell.derived(() => {
+      switch (dependenceC.get()) {
+        case 'A':
+          return A.get() * 2;
+        case 'B':
+          return B.get() * 3;
+        default:
+          return 0;
+      }
+    });
+
+    const D = Cell.derived(() => {
+      switch (dependenceD.get()) {
+        case 'A':
+          return A.get() * 2;
+        case 'B':
+          return B.get() * 3;
+        default:
+          return 0;
+      }
+    });
+
+    const E = Cell.derived(() => C.get() + D.get());
+    expect(E.get()).toBe(56);
+    dependenceC.set('A');
+    expect(E.get()).toBe(40);
+    dependenceD.set('B');
+    B.set(40);
+    dependenceD.set('A');
+    expect(E.get()).toBe(40);
+
+    A.set(2);
+    expect(E.get()).toBe(8);
+  });
+
+  test('Glitch Test: Mathematical Constraint Violation', () => {
+    const number = Cell.source(10);
+    const toggle = Cell.source(false);
+
+    const double = Cell.derived(() => {
+      if (toggle.get()) return number.get() * 2;
+      return 0;
+    });
+
+    const sum = Cell.derived(() => {
+      return number.get() + double.get();
+    });
+
+    expect(sum.get()).toBe(10);
+    toggle.set(true);
+    expect(sum.get()).toBe(30);
+
+    number.set(20);
+    expect(sum.get()).toBe(60);
+  });
+
+  test('Glitch Test: Zombie Child (Array/Index Mismatch)', () => {
+    const listType = Cell.source('A');
+    const toggle = Cell.source(false);
+
+    const listData = Cell.derived(() => {
+      if (toggle.get()) {
+        return listType.get() === 'A' ? ['Item A1', 'Item A2'] : ['Item B1'];
+      }
+      return ['Item A1', 'Item A2'];
+    });
+
+    const selection = Cell.derived(() => {
+      const type = listType.get();
+      const data = listData.get();
+
+      return `${type}:${data.length}`;
+    });
+
+    toggle.set(true);
+    expect(selection.get()).toBe('A:2');
+
+    listType.set('B');
+
+    expect(selection.get()).toBe('B:1');
   });
 });
 
@@ -982,7 +1086,7 @@ describe('Effect options', () => {
     expect(() => {
       cell.listen(callback, { name: 'test' });
     }).toThrowError(
-      'An effect with the name "test" is already listening to this cell.'
+      'An effect with the name "test" is already listening to this cell.',
     );
   });
 
@@ -1036,7 +1140,7 @@ describe('Cell options', () => {
       { a: 1, b: 2 },
       {
         equals: (a, b) => a.a === b.a && a.b === b.b,
-      }
+      },
     );
     const callback = vi.fn();
     cell.listen(callback);
