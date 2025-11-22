@@ -508,7 +508,6 @@ describe('Derived cells', () => {
     });
 
     const sum = Cell.derived(() => {
-      console.log('Evaluating summ');
       return number.get() + double.get();
     });
 
@@ -517,8 +516,6 @@ describe('Derived cells', () => {
     expect(sum.get()).toBe(30);
 
     number.set(20);
-
-    console.log('FINALA', double.depth, sum.depth);
     expect(sum.get()).toBe(60);
   });
 
