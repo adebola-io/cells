@@ -217,3 +217,26 @@ cell.listen(callback, {
   priority: number, // The priority of the effect (higher priority effects run first)
 });
 ```
+
+### Explicit Disposal (Contexts)
+
+By default, Cells uses `WeakRef` and Garbage Collection to manage memory. This is easy to use but can lead to "ghost computations", where listeners and derived cells keep running for a short time after they are no longer needed.
+
+For high-performance scenarios, you can use a `LocalContext` to group dependencies and kill them synchronously.
+
+```javascript
+const ctx = Cell.context();
+const source = Cell.source(1);
+
+Cell.runWithContext(ctx, () => {
+  // This listener is now bound to 'ctx' (Strong Reference)
+  source.listen((val) => console.log(val));
+});
+
+source.set(2); // Logs: 2
+
+// Synchronously remove all listeners created in that block
+ctx.destroy();
+
+source.set(3); // Nothing happens
+```

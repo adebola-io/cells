@@ -22,7 +22,7 @@ describe('Cells', () => {
         a: 1,
         b: { c: 2, d: 3 },
       },
-      { deep: true },
+      { deep: true }
     );
     const callback = vi.fn();
     cell.listen(callback);
@@ -391,7 +391,7 @@ describe('Derived cells', () => {
     expect(callback).toHaveBeenCalledWith(null);
 
     const derivedUndefined = Cell.derived(() =>
-      cell.get() > 0 ? cell.get() : undefined,
+      cell.get() > 0 ? cell.get() : undefined
     );
     expect(derivedUndefined.get()).toBeUndefined();
     const callbackUndefined = vi.fn();
@@ -876,7 +876,7 @@ describe('Cell.async', () => {
   });
 
   test('run() should handle rapid successive calls correctly', async () => {
-    let completed = [];
+    const completed = [];
     const getter = vi.fn(async function (id) {
       await new Promise((resolve) => setTimeout(resolve, 20));
       if (this.signal.aborted) return null;
@@ -899,7 +899,7 @@ describe('Cell.async', () => {
   });
 
   test('AbortSignal should be properly aborted on new run()', async () => {
-    let abortedSignals = [];
+    const abortedSignals = [];
     const getter = vi.fn(async function (value) {
       this.signal.addEventListener('abort', () => abortedSignals.push(value));
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -982,7 +982,7 @@ describe('Effect options', () => {
     expect(() => {
       cell.listen(callback, { name: 'test' });
     }).toThrowError(
-      'An effect with the name "test" is already listening to this cell.',
+      'An effect with the name "test" is already listening to this cell.'
     );
   });
 
@@ -1036,7 +1036,7 @@ describe('Cell options', () => {
       { a: 1, b: 2 },
       {
         equals: (a, b) => a.a === b.a && a.b === b.b,
-      },
+      }
     );
     const callback = vi.fn();
     cell.listen(callback);
@@ -1050,15 +1050,6 @@ describe('Cell options', () => {
 
 // NOTE: This describe block name is duplicated later. Consider renaming one.
 describe('Derived Cells', () => {
-  test('derived cells should be available', () => {
-    const s = Cell.source(1);
-    const f = Cell.derived(() => s.get() + 1);
-    expect(f.get()).toEqual(2);
-
-    const derived = s.derivedCells;
-    expect(derived).toEqual([f]);
-  });
-
   test('derived cells should have dynamic dependencies', () => {
     const a = Cell.source(1);
     const b = Cell.source(2);
@@ -1195,5 +1186,83 @@ describe('Equality Checks (deepEqual)', () => {
     expect(callback).toHaveBeenCalledTimes(2);
     cell.set(null);
     expect(callback).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('Tracking contexts', () => {
+  describe('Tracking contexts (Explicit Resource Management)', () => {
+    test('Effect should stop immediately after context destruction', () => {
+      const source = Cell.source(0);
+      const context = Cell.context();
+      const callback = vi.fn();
+
+      Cell.runWithContext(context, () => {
+        source.listen(callback);
+      });
+
+      source.set(1);
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith(1);
+
+      context.destroy();
+      source.set(2);
+
+      expect(callback).toHaveBeenCalledTimes(1);
+    });
+
+    test('Derived cells should detach from sources after context destruction', () => {
+      const source = Cell.source(10);
+      const context = Cell.context();
+
+      let derivedValue;
+
+      Cell.runWithContext(context, () => {
+        const derived = Cell.derived(() => source.get() * 2);
+
+        derived.listen((val) => {
+          derivedValue = val;
+        });
+      });
+
+      source.set(20);
+      expect(derivedValue).toBe(40);
+      context.destroy();
+      source.set(30);
+
+      expect(derivedValue).toBe(40);
+    });
+
+    test('Nested contexts should handle stack correctly', () => {
+      const globalSource = Cell.source(0);
+      const parentContext = Cell.context();
+      const childContext = Cell.context();
+
+      const parentSpy = vi.fn();
+      const childSpy = vi.fn();
+
+      Cell.runWithContext(parentContext, () => {
+        globalSource.listen(parentSpy);
+
+        Cell.runWithContext(childContext, () => {
+          globalSource.listen(childSpy);
+        });
+      });
+
+      globalSource.set(1);
+      expect(parentSpy).toHaveBeenCalledTimes(1);
+      expect(childSpy).toHaveBeenCalledTimes(1);
+
+      childContext.destroy();
+
+      globalSource.set(2);
+      expect(parentSpy).toHaveBeenCalledTimes(2);
+      expect(childSpy).toHaveBeenCalledTimes(1);
+
+      parentContext.destroy();
+
+      globalSource.set(3);
+      expect(parentSpy).toHaveBeenCalledTimes(2);
+      expect(childSpy).toHaveBeenCalledTimes(1);
+    });
   });
 });

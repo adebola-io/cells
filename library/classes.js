@@ -75,16 +75,65 @@ let BATCHED_EFFECTS = new Map();
 const ACTIVE_DERIVED_CTX = [];
 
 /**
+ * @template {WeakKey & { ref: WeakRef<any> | null }} Value
+ * @extends {Set<Value>}
+ */
+class InternallyWeakSet {
+  /** @type {Set<WeakRef<Value>>} */
+  #internal = new Set();
+
+  /** @param {Value} value */
+  add(value) {
+    if (value.ref === null) value.ref = new WeakRef(value);
+    this.#internal.add(value.ref);
+    return this;
+  }
+
+  /** @param {Value} value */
+  delete(value) {
+    if (value.ref === null) return false;
+    return this.#internal.delete(value.ref);
+  }
+
+  /** @param {Value} value */
+  has(value) {
+    if (value.ref === null) return false;
+    return this.#internal.has(value.ref);
+  }
+
+  *[Symbol.iterator]() {
+    for (const ref of this.#internal) {
+      const value = ref.deref();
+      if (value) yield value;
+      else this.#internal.delete(ref); // Cleanup dead refs while iterating
+    }
+  }
+}
+
+/**
+ * @template {WeakKey & { ref: WeakRef<any> | null }}  Value
+ * @typedef {InternallyWeakSet<Value> | Set<Value>} SetLike
+ */
+
+/**
+ * @template {WeakKey & { ref: WeakRef<any> | null }} Key
+ * @template Value
+ * @typedef {Map<Key, Value> | WeakMap<Key, Value>} MapLike
+ */
+
+const GlobalTrackingContext = {};
+let CurrentTrackingContext = GlobalTrackingContext;
+
+/**
  * Tracks cells that need to be updated during the update cycle.
  * Cells are added to this stack to be processed and updated sequentially.
  * @type {Set<Cell<any>>}
  */
 const UPDATE_BUFFER = new Set();
-
-/** @type {WeakMap<Cell<any>, Set<WeakRef<DerivedCell<any>>>>} */
-const DERIVED_CELLS = new WeakMap();
-
 let IS_UPDATING = false;
+
+/** @type {object[]} */
+const CONTEXT_STACK = [GlobalTrackingContext];
 
 /** @type {Error[]} */
 const cellErrors = [];
@@ -110,26 +159,12 @@ function triggerUpdate() {
     }
 
     // Run computed dependents.
-    const computedDependents = DERIVED_CELLS.get(cell);
-    if (computedDependents)
-      for (const dependent of computedDependents) {
-        const deref = dependent.deref();
-        if (deref === undefined) {
-          computedDependents.delete(dependent);
-          continue;
-        }
-
-        const computedCell = deref;
-        if (BATCH_NESTING_LEVEL > 0) {
-          BATCHED_EFFECTS.set(() => {
-            if (!computedCell.initialized) return;
-            UPDATE_BUFFER.add(computedCell);
-          }, undefined);
-        } else {
-          if (!computedCell.initialized) continue;
-          UPDATE_BUFFER.add(computedCell);
-        }
-      }
+    const computedDependents = cell.derivations;
+    for (const computedCell of computedDependents) {
+      if (BATCH_NESTING_LEVEL > 0)
+        BATCHED_EFFECTS.set(() => UPDATE_BUFFER.add(computedCell), undefined);
+      else UPDATE_BUFFER.add(computedCell);
+    }
 
     // @ts-expect-error: Cell.update is protected.
     cell.update();
@@ -142,6 +177,7 @@ function triggerUpdate() {
 function throwAnyErrors() {
   if (cellErrors.length > 0) {
     const errors = [...cellErrors];
+    for (const error of errors) console.warn(error);
     cellErrors.length = 0;
     throw new CellUpdateError(errors);
   }
@@ -205,6 +241,68 @@ class Effect {
   }
 }
 
+export class LocalContext {
+  /** @type {Map<DerivedCell<any>, Set<Cell<any>>>} */
+  derivationSourceMap = new Map();
+  /** @type {Map<Cell<any>, Set<Effect<any>>>} */
+  effects = new Map();
+
+  destroy() {
+    if (CONTEXT_STACK.includes(this)) {
+      throw new Error('Cannot destroy a context inside its callback.');
+    }
+
+    for (const [derivation, sources] of this.derivationSourceMap) {
+      for (const source of sources) {
+        source.derivations.delete(derivation);
+      }
+    }
+
+    for (const [cell, effects] of this.effects) {
+      if (cell instanceof DerivedCell && this.derivationSourceMap.has(cell)) {
+        // There is no point to ignoring the listener, since it will be disposed
+        // and unreachable on the graph anyway.
+        continue;
+      }
+
+      for (const effect of effects) {
+        if (effect.callback !== undefined) cell.ignore(effect.callback);
+      }
+    }
+
+    this.derivationSourceMap.clear();
+    this.effects.clear();
+  }
+}
+
+/**
+ * @template T
+ * @param {Cell<T>} cell
+ * @param {Effect<T>} effectContainer
+ */
+function addEffectToCurrentContext(cell, effectContainer) {
+  if (!(CurrentTrackingContext instanceof LocalContext)) return;
+  let effectStore = CurrentTrackingContext.effects.get(cell);
+  if (effectStore === undefined) {
+    effectStore = new Set();
+    CurrentTrackingContext.effects.set(cell, effectStore);
+  }
+  effectStore.add(effectContainer);
+}
+
+/**
+ * @param {LocalContext} context
+ */
+function pushLocalContext(context) {
+  CONTEXT_STACK.push(context);
+  CurrentTrackingContext = context;
+}
+
+function popLocalContext() {
+  CONTEXT_STACK.pop();
+  CurrentTrackingContext = CONTEXT_STACK[CONTEXT_STACK.length - 1];
+}
+
 /**
  * @template {*} out T The type of value stored in the cell
  *
@@ -230,27 +328,22 @@ export class Cell {
    */
   #effects = [];
 
+  /** @type {WeakRef<this> | null} */
+  ref = null;
+
   constructor() {
     if (new.target === Cell) {
       throw new Error(
-        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.',
+        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.'
       );
     }
-  }
-
-  /**
-   * @returns {Array<DerivedCell<any>>}
-   */
-  get derivedCells() {
-    const dependents = DERIVED_CELLS.get(this);
-    const cells = [];
-    if (dependents) {
-      for (const cell of dependents) {
-        const cellDeref = cell.deref();
-        if (cellDeref) cells.push(cellDeref);
-      }
-    }
-    return cells;
+    /**
+     * @type {SetLike<DerivedCell<any>>}
+     */
+    this.derivations =
+      CurrentTrackingContext === GlobalTrackingContext
+        ? new InternallyWeakSet()
+        : new Set();
   }
 
   /**
@@ -302,17 +395,16 @@ export class Cell {
       return this.wvalue;
     }
 
-    let dependents = DERIVED_CELLS.get(this);
-    if (dependents === undefined) {
-      dependents = new Set();
-      DERIVED_CELLS.set(this, dependents);
-    }
-
-    const isAlreadySubscribed = dependents?.has(currentlyComputedValue.ref);
+    const isAlreadySubscribed = this.derivations.has(currentlyComputedValue);
     if (isAlreadySubscribed) {
       return this.wvalue;
     }
-    dependents.add(currentlyComputedValue.ref);
+    this.derivations.add(currentlyComputedValue);
+    if (CurrentTrackingContext instanceof LocalContext) {
+      CurrentTrackingContext.derivationSourceMap
+        .get(currentlyComputedValue)
+        ?.add(this);
+    }
     return this.wvalue;
   }
 
@@ -342,7 +434,7 @@ export class Cell {
 
     if (options?.name && this.isListeningTo(options.name)) {
       throw new Error(
-        `An effect with the name "${options.name}" is already listening to this cell.`,
+        `An effect with the name "${options.name}" is already listening to this cell.`
       );
     }
 
@@ -351,7 +443,10 @@ export class Cell {
     });
 
     if (!isAlreadySubscribed) {
-      this.#effects.push(new Effect(effect, options));
+      const effectContainer = new Effect(effect, options);
+      this.#effects.push(effectContainer);
+
+      addEffectToCurrentContext(this, effectContainer);
     }
 
     this.#effects.sort((a, b) => {
@@ -402,7 +497,9 @@ export class Cell {
     });
 
     if (!isAlreadySubscribed) {
-      this.#effects.push(new Effect(cb, options));
+      const effectContainer = new Effect(cb, options);
+      this.#effects.push(effectContainer);
+      addEffectToCurrentContext(this, effectContainer);
     }
 
     this.#effects.sort((a, b) => {
@@ -536,6 +633,34 @@ export class Cell {
   static derived = (callback) => new DerivedCell(callback);
 
   /**
+   * Creates a new LocalContext container.
+   * This context can be used to track effects and derived cells created within a specific scope
+   * and dispose of them synchronously using `context.destroy()`.
+   *
+   * @returns {LocalContext} A new LocalContext instance.
+   */
+  static context = () => new LocalContext();
+
+  /**
+   * Executes a function within a specific LocalContext.
+   * Any effects (`.listen`) or derived cells (`Cell.derived`) created synchronously
+   * within the callback will be attached to the provided context.
+   *
+   * @template T
+   * @param {LocalContext} context - The context to bind resources to.
+   * @param {() => T} callback - The function to execute.
+   * @returns {T} The return value of the callback.
+   */
+  static runWithContext = (context, callback) => {
+    pushLocalContext(context);
+    try {
+      return callback();
+    } finally {
+      popLocalContext();
+    }
+  };
+
+  /**
    * @template X
    * Batches all the effects created to run only once.
    * @param {() => X} callback - The function to be executed in a batched manner.
@@ -584,10 +709,6 @@ export class Cell {
   static flatten = (value) => {
     if (value instanceof Cell) {
       if (value instanceof DerivedCell) {
-        if (value.initialized) {
-          return Cell.flatten(value.wvalue);
-        }
-        value.setValue(value.computedFn());
         return Cell.flatten(value.wvalue);
       }
       return Cell.flatten(value.wvalue);
@@ -698,7 +819,7 @@ export class Cell {
         const currentController = controller;
         try {
           const result = await getter.bind(currentController)(
-            /** @type {X} */ (newInput ?? initialInput),
+            /** @type {X} */ (newInput ?? initialInput)
           );
           if (currentController?.signal.aborted) return;
           data.set(result);
@@ -738,7 +859,10 @@ export class DerivedCell extends Cell {
    */
   constructor(computedFn) {
     super();
-    this.ref = new WeakRef(this);
+    if (CurrentTrackingContext instanceof LocalContext) {
+      CurrentTrackingContext.derivationSourceMap.set(this, new Set());
+    }
+
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
       ACTIVE_DERIVED_CTX.push(this);
@@ -751,15 +875,14 @@ export class DerivedCell extends Cell {
       ACTIVE_DERIVED_CTX.pop();
       return value;
     };
+
+    this.setValue(derivationWrapper());
     this.computedFn = /** @type {() => T} */ (derivationWrapper);
-    this.initialized = false;
+    throwAnyErrors();
   }
 
   /** @type {() => T} */
   computedFn;
-
-  /** @type {WeakRef<this>} */
-  ref;
 
   /**
    * Gets the current value of the derived cell, computing it if necessary,
@@ -767,41 +890,7 @@ export class DerivedCell extends Cell {
    * @returns {T} The value of the Cell.
    */
   get() {
-    if (!this.initialized) {
-      this.initialized = true;
-      this.setValue(this.computedFn());
-      throwAnyErrors();
-    }
     return this.revalued;
-  }
-
-  /**
-   * Listens for changes to the cell, initializing the value if not already done.
-   * @param {(newValue: T) => void} callback - The function to call when the cell's value changes.
-   * @param {object} [options] - Optional configuration for listening.
-   */
-  listen(callback, options) {
-    if (!this.initialized) {
-      this.initialized = true;
-      this.setValue(this.computedFn());
-      throwAnyErrors();
-    }
-    return super.listen(callback, options);
-  }
-
-  /**
-   * Runs the callback and sets up a listener, initializing the cell's value if not already done.
-   * @param {(newValue: T) => void} callback - The function to call when the cell's value changes.
-   * @param {object} [options] - Optional configuration for listening and running.
-   * @returns {*} The result of the parent class's runAndListen method.
-   */
-  runAndListen(callback, options) {
-    if (!this.initialized) {
-      this.initialized = true;
-      this.setValue(this.computedFn());
-      throwAnyErrors();
-    }
-    return super.runAndListen(callback, options);
   }
 }
 
