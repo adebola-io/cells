@@ -132,7 +132,7 @@ const IsScheduled = Symbol();
  * Cells are added to this stack to be processed and updated sequentially.
  * @type {Array<Cell<any>>}
  */
-let UPDATE_BUFFER = [];
+const UPDATE_BUFFER = [];
 let IS_UPDATING = false;
 
 /** @type {object[]} */
@@ -197,7 +197,7 @@ function triggerUpdate() {
     if (cell[IsScheduled]) cell.update();
     cell[IsScheduled] = false;
   }
-  UPDATE_BUFFER = [];
+  UPDATE_BUFFER.length = 0;
   IS_UPDATING = false;
   throwAnyErrors();
 }
