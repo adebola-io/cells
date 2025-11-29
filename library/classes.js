@@ -164,7 +164,9 @@ function triggerUpdate() {
         UPDATE_BUFFER.push(cell);
         continue;
       }
-      currentDepth = depth;
+      if (depth > currentDepth) {
+        currentDepth = depth;
+      }
 
       const newValue = cell.computedFn();
       // @ts-expect-error: wvalue is protected.
