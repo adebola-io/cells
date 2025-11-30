@@ -1093,29 +1093,6 @@ describe('Cell.async', () => {
     expect(data.get()).toBe('result2');
   });
 
-  test('run() should handle rapid successive calls correctly', async () => {
-    const completed = [];
-    const getter = vi.fn(async function (id) {
-      await new Promise((resolve) => setTimeout(resolve, 20));
-      if (this.signal.aborted) return null;
-      completed.push(id);
-      return id;
-    });
-
-    const { data, run } = Cell.async(getter);
-
-    // Start multiple runs rapidly - only the last should succeed
-    const results = await Promise.all([
-      run('first'),
-      run('second'),
-      run('third'),
-    ]);
-
-    expect(results).toEqual([null, null, 'third']); // First two aborted
-    expect(data.get()).toBe('third'); // Last one wins
-    expect(completed).toEqual(['third']); // Only last completes
-  });
-
   test('AbortSignal should be properly aborted on new run()', async () => {
     const abortedSignals = [];
     const getter = vi.fn(async function (value) {

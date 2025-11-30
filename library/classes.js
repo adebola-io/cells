@@ -133,7 +133,6 @@ const IsScheduled = Symbol();
  * @type {Array<Cell<any>>}
  */
 const UPDATE_BUFFER = [];
-let LAST_PROCESSED_INDEX = 0;
 let IS_UPDATING = false;
 
 /** @type {object[]} */
@@ -154,63 +153,66 @@ const cellErrors = [];
 function triggerUpdate() {
   IS_UPDATING = true;
   let currentDepth = 0;
-  for (let i = LAST_PROCESSED_INDEX; i < UPDATE_BUFFER.length; i++) {
-    const cell = UPDATE_BUFFER[i];
-
-    if (cell instanceof DerivedCell) {
-      const depth = cell[Depth];
-      if (depth > currentDepth + 1) {
-        // Move nodes with higher depths to the end of the array so they
-        // are processed last.
-        UPDATE_BUFFER.push(cell);
-        continue;
+  let lastProcessedCellIndex = 0;
+  while (lastProcessedCellIndex < UPDATE_BUFFER.length) {
+    for (let i = lastProcessedCellIndex; i < UPDATE_BUFFER.length; i++) {
+      const cell = UPDATE_BUFFER[i];
+      if (cell instanceof DerivedCell) {
+        const depth = cell[Depth];
+        if (depth > currentDepth + 1) {
+          // Move nodes with higher depths to the end of the array so they
+          // are processed last.
+          UPDATE_BUFFER.push(cell);
+          continue;
+        }
+        if (depth > currentDepth) currentDepth = depth;
+        const newValue = cell.computedFn();
+        // @ts-expect-error: wvalue is protected.
+        if (deepEqual(cell.wvalue, newValue)) {
+          cell[IsScheduled] = false;
+          continue;
+        }
+        // @ts-expect-error: wvalue is protected.
+        cell.wvalue = newValue;
       }
-      if (depth > currentDepth) {
-        currentDepth = depth;
+
+      // Run computed dependents.
+      const computedDependents = cell.derivations;
+      for (const computedCell of computedDependents) {
+        if (computedCell[IsScheduled]) continue;
+
+        if (BATCH_NESTING_LEVEL > 0)
+          BATCHED_EFFECTS.set(
+            () => UPDATE_BUFFER.push(computedCell),
+            undefined,
+          );
+        else UPDATE_BUFFER.push(computedCell);
+        computedCell[IsScheduled] = true;
       }
-
-      const newValue = cell.computedFn();
-      // @ts-expect-error: wvalue is protected.
-      if (deepEqual(cell.wvalue, newValue)) {
-        cell[IsScheduled] = false;
-        continue;
+      // Check the last cell.
+      const last = UPDATE_BUFFER[UPDATE_BUFFER.length - 1];
+      if (last instanceof DerivedCell && last[Depth] - 1 > currentDepth) {
+        currentDepth = last[Depth] - 1;
       }
-      // @ts-expect-error: wvalue is protected.
-      cell.wvalue = newValue;
     }
-
-    // Run computed dependents.
-    const computedDependents = cell.derivations;
-    for (const computedCell of computedDependents) {
-      if (computedCell[IsScheduled]) continue;
-
-      if (BATCH_NESTING_LEVEL > 0)
-        BATCHED_EFFECTS.set(() => UPDATE_BUFFER.push(computedCell), undefined);
-      else UPDATE_BUFFER.push(computedCell);
-      computedCell[IsScheduled] = true;
-    }
-    // Check the last cell.
-    const last = UPDATE_BUFFER[UPDATE_BUFFER.length - 1];
-    if (last instanceof DerivedCell && last[Depth] - 1 > currentDepth) {
-      currentDepth = last[Depth] - 1;
-    }
-  }
-  IS_UPDATING = false;
-  let i = LAST_PROCESSED_INDEX;
-  if (LAST_PROCESSED_INDEX !== 0) {
     // A cell can update in another's effect, triggering a rerun
     // of the whole process. Since the UPDATE_BUFFER is the same array,
     // we need to know where to continue iteration from.
-    LAST_PROCESSED_INDEX = UPDATE_BUFFER.length - 1;
+    let i = lastProcessedCellIndex;
+    lastProcessedCellIndex = UPDATE_BUFFER.length;
+    for (; i < UPDATE_BUFFER.length; i++) {
+      const cell = UPDATE_BUFFER[i];
+      if (cell[IsScheduled]) {
+        // @ts-expect-error: Cell.update is protected.
+        cell.update();
+        cell[IsScheduled] = false;
+      }
+    }
   }
-  for (; i < UPDATE_BUFFER.length; i++) {
-    const cell = UPDATE_BUFFER[i];
-    // @ts-expect-error: Cell.update is protected.
-    if (cell[IsScheduled]) cell.update();
-    cell[IsScheduled] = false;
-  }
+
+  IS_UPDATING = false;
   UPDATE_BUFFER.length = 0;
-  LAST_PROCESSED_INDEX = 0;
+  lastProcessedCellIndex = 0;
   throwAnyErrors();
 }
 
@@ -608,14 +610,11 @@ export class Cell {
     // Run watchers.
     const wvalue = this.wvalue;
     const effects = this.#effects;
-    let len = effects.length;
 
-    for (let i = 0; i < len; i++) {
-      const watcher = effects[i].callback;
+    let hasUndefinedEffect = false;
+    for (const { callback: watcher } of effects) {
       if (watcher === undefined) {
-        effects.splice(i, 1);
-        i--;
-        len--;
+        hasUndefinedEffect = true;
         continue;
       }
 
@@ -630,6 +629,11 @@ export class Cell {
           }
         }
       }
+    }
+    if (hasUndefinedEffect) {
+      this.#effects = this.#effects.filter(
+        (effect) => effect.callback !== undefined,
+      );
     }
   }
 
@@ -831,23 +835,22 @@ export class Cell {
       error.set(null);
       data.set(null);
 
-      await Cell.batch(async () => {
-        const currentController = controller;
-        try {
-          initialInput = input;
-          const _input = /** @type {X} */ (input);
-          const result = await getter.bind(currentController)(_input);
-          if (currentController?.signal.aborted) return;
-          data.set(result);
-        } catch (e) {
-          if (e instanceof Error) {
-            error.set(e);
-          } else {
-            throw e;
-          }
+      const currentController = controller;
+      try {
+        initialInput = input;
+        const _input = /** @type {X} */ (input);
+        const result = await getter.bind(currentController)(_input);
+        if (currentController?.signal.aborted) return;
+        data.set(result);
+      } catch (e) {
+        if (e instanceof Error) {
+          error.set(e);
+        } else {
+          throw e;
         }
-        pending.set(false);
-      });
+      }
+      pending.set(false);
+
       return data.get();
     }
 
