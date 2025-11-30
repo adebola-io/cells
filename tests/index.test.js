@@ -286,6 +286,27 @@ describe('Effects', () => {
     expect(b.get()).toBe(3);
     expect(sum.get()).toBe(5);
   });
+
+  test('Does not lead to infinite loop on effect write, if value is the same', () => {
+    const text = Cell.source('Hello');
+    const view = Cell.source(text.get());
+
+    expect(text.get()).toBe('Hello');
+
+    text.listen(() => {
+      view.set(text.get());
+    });
+
+    view.listen(() => {
+      text.set(view.get());
+    });
+
+    text.set('Hello, world.');
+    expect(view.get()).toBe('Hello, world.');
+
+    view.set('This is a message.');
+    expect(text.get()).toBe('This is a message.');
+  });
 });
 
 describe('Derived cells', () => {
@@ -995,7 +1016,7 @@ describe('Cell.async', () => {
 
   test('Should update loading state', async () => {
     const getter = async () => {
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve));
       return true;
     };
 
@@ -1014,7 +1035,7 @@ describe('Cell.async', () => {
   test('Should abort previous async operations when a new one starts', async () => {
     const getter = vi.fn(async function (value) {
       await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => resolve(value * 2), 100);
+        const timeout = setTimeout(() => resolve(value * 2));
         this.signal.addEventListener('abort', () => {
           clearTimeout(timeout);
           reject(new Error('Aborted'));
@@ -1026,7 +1047,7 @@ describe('Cell.async', () => {
     const { data, run, error } = Cell.async(getter);
 
     const promise1 = run(5);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve));
     const promise2 = run(10);
 
     await Promise.allSettled([promise1, promise2]);
@@ -1069,7 +1090,7 @@ describe('Cell.async', () => {
     let callCount = 0;
     const getter = vi.fn(async function () {
       callCount++;
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve));
       if (this.signal.aborted) {
         throw new Error('Aborted');
       }
@@ -1082,7 +1103,7 @@ describe('Cell.async', () => {
     const promise1 = run();
 
     // Quickly start second run
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve));
     const result2 = await run();
 
     // Wait for first to settle
@@ -1097,7 +1118,7 @@ describe('Cell.async', () => {
     const abortedSignals = [];
     const getter = vi.fn(async function (value) {
       this.signal.addEventListener('abort', () => abortedSignals.push(value));
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await new Promise((resolve) => setTimeout(resolve));
       return value;
     });
 
@@ -1107,7 +1128,7 @@ describe('Cell.async', () => {
     run(1);
 
     // Start second run before first completes
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve));
     await run(2);
 
     expect(abortedSignals).toContain(1);
