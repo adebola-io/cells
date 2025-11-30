@@ -172,6 +172,120 @@ describe('Effects', () => {
 
     expect(message).toEqual('The derived cell is 4');
   });
+
+  test('Cells should work properly if updated in effects', () => {
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const callback = vi.fn();
+    const c = Cell.derived(() => {
+      callback();
+      return a.get() + b.get();
+    });
+    expect(callback).toHaveBeenCalledTimes(1); // initial run.
+    expect(c.get()).toBe(3);
+
+    a.listen(() => {
+      b.set(a.get() * 2);
+    });
+
+    a.set(2);
+    expect(b.get()).toBe(4);
+    expect(c.get()).toBe(6);
+    expect(callback).toHaveBeenCalledTimes(3); // once again when a is set, again when b is set.
+  });
+
+  test('should update derived cells when source cell is set inside an effect', () => {
+    const trigger = Cell.source(0);
+    const index = Cell.source(10);
+    const doubled = Cell.derived(() => index.get() * 2);
+
+    // Effect that updates another source cell
+    trigger.listen(() => {
+      index.set(5);
+    });
+
+    expect(doubled.get()).toBe(20);
+
+    trigger.set(1);
+
+    expect(index.get()).toBe(5);
+    expect(doubled.get()).toBe(10); // Should be 10, not stale 20
+  });
+
+  test('should propagate through multiple levels of derived cells', () => {
+    const trigger = Cell.source(false);
+    const base = Cell.source(1);
+    const level1 = Cell.derived(() => base.get() + 1);
+    const level2 = Cell.derived(() => level1.get() + 1);
+    const level3 = Cell.derived(() => level2.get() + 1);
+
+    trigger.listen(() => {
+      base.set(10);
+    });
+
+    expect(level3.get()).toBe(4); // 1 + 1 + 1 + 1
+
+    trigger.set(true);
+
+    expect(level1.get()).toBe(11);
+    expect(level2.get()).toBe(12);
+    expect(level3.get()).toBe(13);
+  });
+
+  test('should handle multiple source cells updated in a single effect', () => {
+    const trigger = Cell.source(0);
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const sum = Cell.derived(() => a.get() + b.get());
+
+    trigger.listen(() => {
+      a.set(10);
+      b.set(20);
+    });
+
+    expect(sum.get()).toBe(3);
+
+    trigger.set(1);
+
+    expect(sum.get()).toBe(30);
+  });
+
+  test('should handle effects on derived cells that update source cells', () => {
+    const root = Cell.source(1);
+    const derived = Cell.derived(() => root.get() * 2);
+    const secondary = Cell.source(0);
+    const final = Cell.derived(() => secondary.get() + 100);
+
+    derived.listen((value) => {
+      secondary.set(value);
+    });
+
+    expect(final.get()).toBe(100);
+
+    root.set(5);
+
+    expect(derived.get()).toBe(10);
+    expect(secondary.get()).toBe(10);
+    expect(final.get()).toBe(110);
+  });
+
+  test('effects should cascade if synchronized manually', () => {
+    const a = Cell.source(1);
+    const b = Cell.source(a.get() + 1);
+    const sum = Cell.source(a.get() + b.get());
+
+    a.listen(() => {
+      b.set(a.get() + 1);
+    });
+
+    b.listen(() => {
+      sum.set(b.get() + a.get());
+    });
+
+    a.set(2);
+    expect(b.get()).toBe(3);
+    expect(sum.get()).toBe(5);
+  });
 });
 
 describe('Derived cells', () => {

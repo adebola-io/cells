@@ -133,6 +133,7 @@ const IsScheduled = Symbol();
  * @type {Array<Cell<any>>}
  */
 const UPDATE_BUFFER = [];
+let LAST_PROCESSED_INDEX = 0;
 let IS_UPDATING = false;
 
 /** @type {object[]} */
@@ -153,7 +154,7 @@ const cellErrors = [];
 function triggerUpdate() {
   IS_UPDATING = true;
   let currentDepth = 0;
-  for (let i = 0; i < UPDATE_BUFFER.length; i++) {
+  for (let i = LAST_PROCESSED_INDEX; i < UPDATE_BUFFER.length; i++) {
     const cell = UPDATE_BUFFER[i];
 
     if (cell instanceof DerivedCell) {
@@ -194,13 +195,22 @@ function triggerUpdate() {
       currentDepth = last[Depth] - 1;
     }
   }
-  for (const cell of UPDATE_BUFFER) {
+  IS_UPDATING = false;
+  let i = LAST_PROCESSED_INDEX;
+  if (LAST_PROCESSED_INDEX !== 0) {
+    // A cell can update in another's effect, triggering a rerun
+    // of the whole process. Since the UPDATE_BUFFER is the same array,
+    // we need to know where to continue iteration from.
+    LAST_PROCESSED_INDEX = UPDATE_BUFFER.length - 1;
+  }
+  for (; i < UPDATE_BUFFER.length; i++) {
+    const cell = UPDATE_BUFFER[i];
     // @ts-expect-error: Cell.update is protected.
     if (cell[IsScheduled]) cell.update();
     cell[IsScheduled] = false;
   }
   UPDATE_BUFFER.length = 0;
-  IS_UPDATING = false;
+  LAST_PROCESSED_INDEX = 0;
   throwAnyErrors();
 }
 
