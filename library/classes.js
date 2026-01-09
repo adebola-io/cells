@@ -132,7 +132,7 @@ const IsScheduled = Symbol();
  * Cells are added to this stack to be processed and updated sequentially.
  * @type {Array<Cell<any>>}
  */
-const UPDATE_BUFFER = [];
+let UPDATE_BUFFER = [];
 let IS_UPDATING = false;
 
 /** @type {object[]} */
@@ -181,12 +181,7 @@ function triggerUpdate() {
       for (const computedCell of computedDependents) {
         if (computedCell[IsScheduled]) continue;
 
-        if (BATCH_NESTING_LEVEL > 0)
-          BATCHED_EFFECTS.set(
-            () => UPDATE_BUFFER.push(computedCell),
-            undefined,
-          );
-        else UPDATE_BUFFER.push(computedCell);
+        UPDATE_BUFFER.push(computedCell);
         computedCell[IsScheduled] = true;
       }
       // Check the last cell.
@@ -719,25 +714,42 @@ export class Cell {
    * @returns {X} The return value of the callback.
    */
   static batch = (callback) => {
+    const currentBatchLevel = BATCH_NESTING_LEVEL;
+    const currentUpdateBuffer = UPDATE_BUFFER;
+    const wasUpdating = IS_UPDATING;
+    const currentBatchedEffects = BATCHED_EFFECTS;
+
+    UPDATE_BUFFER = [];
+    IS_UPDATING = true;
     BATCH_NESTING_LEVEL++;
+    BATCHED_EFFECTS = new Map();
     /** @type {X | undefined} */
     let value;
-    let error;
     try {
-      value = callback();
-    } catch (e) {
-      error = e;
-    }
-    BATCH_NESTING_LEVEL--;
-    if (error instanceof Error) {
-      cellErrors.push(error);
-    }
-    if (BATCH_NESTING_LEVEL === 0) {
-      for (const [effect, args] of BATCHED_EFFECTS) {
-        effect(args);
+      try {
+        value = callback();
+      } catch (e) {
+        if (e instanceof Error) cellErrors.push(e);
       }
-      if (!IS_UPDATING) triggerUpdate();
-      BATCHED_EFFECTS = new Map();
+      if (!wasUpdating) triggerUpdate();
+    } catch (e) {
+      if (e instanceof Error) cellErrors.push(e);
+    } finally {
+      BATCH_NESTING_LEVEL = currentBatchLevel;
+      if (BATCH_NESTING_LEVEL === 0) {
+        for (const [effect, value] of BATCHED_EFFECTS) {
+          try {
+            effect(value);
+          } catch (e) {
+            if (e instanceof Error) cellErrors.push(e);
+          }
+        }
+      }
+
+      UPDATE_BUFFER = currentUpdateBuffer;
+      IS_UPDATING = wasUpdating;
+      BATCH_NESTING_LEVEL = currentBatchLevel;
+      BATCHED_EFFECTS = currentBatchedEffects;
     }
     throwAnyErrors();
     return /** @type {X} */ (value);
