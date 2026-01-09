@@ -187,7 +187,7 @@ function triggerUpdate() {
       // Check the last cell.
       const last = UPDATE_BUFFER[UPDATE_BUFFER.length - 1];
       if (last instanceof DerivedCell && last[Depth] - 1 > currentDepth) {
-        currentDepth = last[Depth] - 1;
+        currentDepth++;
       }
     }
     // A cell can update in another's effect, triggering a rerun

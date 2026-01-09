@@ -633,6 +633,29 @@ describe('Derived cells', () => {
     expect(E.get()).toBe(8);
   });
 
+  test('Glitch Test: Diamond dependency pattern', () => {
+    const source = Cell.source(1);
+    const derivedA = Cell.derived(() => source.get() * 2);
+    const derivedB = Cell.derived(() => derivedA.get() + 1);
+    const derivedC = Cell.derived(() => derivedB.get() * 3);
+    const derivedD = Cell.derived(() => derivedC.get() + derivedA.get());
+
+    expect(derivedD.get()).toBe(11);
+
+    const callbackD = vi.fn();
+    derivedD.listen(callbackD);
+
+    source.set(4);
+
+    expect(derivedA.get()).toBe(8);
+    expect(derivedB.get()).toBe(9);
+    expect(derivedC.get()).toBe(27);
+    expect(derivedD.get()).toBe(35);
+
+    expect(callbackD).toHaveBeenCalledTimes(1);
+    expect(callbackD).toHaveBeenCalledWith(35);
+  });
+
   test('Glitch Test: Mathematical Constraint Violation', () => {
     const number = Cell.source(10);
     const toggle = Cell.source(false);
@@ -931,6 +954,271 @@ describe('Batched effects', () => {
     cell.set(4);
     expect(listenerCallback).toHaveBeenCalledTimes(2);
     expect(listenerCallback).toHaveBeenCalledWith(4);
+  });
+
+  test('Batch should return the value from the callback', () => {
+    const cell = Cell.source(5);
+    const result = Cell.batch(() => {
+      cell.set(10);
+      return cell.peek() * 2;
+    });
+    expect(result).toBe(20);
+  });
+
+  test('Empty batch should not trigger any effects', () => {
+    const cell = Cell.source(1);
+    const callback = vi.fn();
+    cell.listen(callback);
+
+    Cell.batch(() => {
+      // No changes
+    });
+
+    expect(callback).not.toHaveBeenCalled();
+  });
+
+  test('Batch with deeply nested derived cells chain', () => {
+    const source = Cell.source(1);
+    const derivedA = Cell.derived(() => source.get() * 2);
+    const derivedB = Cell.derived(() => derivedA.get() + 1);
+    const derivedC = Cell.derived(() => derivedB.get() * 3);
+
+    const callbackA = vi.fn();
+    const callbackB = vi.fn();
+    const callbackC = vi.fn();
+
+    derivedA.listen(callbackA);
+    derivedB.listen(callbackB);
+    derivedC.listen(callbackC);
+
+    Cell.batch(() => {
+      source.set(2);
+      source.set(3);
+      source.set(4);
+    });
+
+    // Each derived should only update once
+    expect(callbackA).toHaveBeenCalledTimes(1);
+    expect(callbackB).toHaveBeenCalledTimes(1);
+    expect(callbackC).toHaveBeenCalledTimes(1);
+
+    // Final values should be correct
+    expect(derivedA.get()).toBe(8); // 4 * 2
+    expect(derivedB.get()).toBe(9); // 8 + 1
+    expect(derivedC.get()).toBe(27); // 9 * 3
+
+    // Verify callbacks were called with correct final values
+    expect(callbackA).toHaveBeenCalledWith(8);
+    expect(callbackB).toHaveBeenCalledWith(9);
+    expect(callbackC).toHaveBeenCalledWith(27);
+  });
+
+  test('Batch should work with multiple cells having multiple listeners', () => {
+    const cellA = Cell.source(1);
+    const cellB = Cell.source(2);
+
+    const listenerA1 = vi.fn();
+    const listenerA2 = vi.fn();
+    const listenerB1 = vi.fn();
+    const listenerB2 = vi.fn();
+
+    cellA.listen(listenerA1);
+    cellA.listen(listenerA2);
+    cellB.listen(listenerB1);
+    cellB.listen(listenerB2);
+
+    Cell.batch(() => {
+      cellA.set(10);
+      cellB.set(20);
+      cellA.set(100);
+      cellB.set(200);
+    });
+
+    expect(listenerA1).toHaveBeenCalledTimes(1);
+    expect(listenerA1).toHaveBeenCalledWith(100);
+    expect(listenerA2).toHaveBeenCalledTimes(1);
+    expect(listenerA2).toHaveBeenCalledWith(100);
+    expect(listenerB1).toHaveBeenCalledTimes(1);
+    expect(listenerB1).toHaveBeenCalledWith(200);
+    expect(listenerB2).toHaveBeenCalledTimes(1);
+    expect(listenerB2).toHaveBeenCalledWith(200);
+  });
+
+  test('Peek should return new value during batch', () => {
+    const cell = Cell.source(1);
+
+    Cell.batch(() => {
+      cell.set(10);
+      // peek should return the new value since it was set in the batch
+      expect(cell.peek()).toBe(10);
+      cell.set(20);
+      expect(cell.peek()).toBe(20);
+    });
+
+    expect(cell.peek()).toBe(20);
+  });
+
+  test('Batch isolation - sequential batches should not interfere', () => {
+    const cell = Cell.source(0);
+    const listener = vi.fn();
+    cell.listen(listener);
+
+    Cell.batch(() => {
+      cell.set(1);
+      cell.set(2);
+    });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(2);
+
+    Cell.batch(() => {
+      cell.set(3);
+      cell.set(4);
+    });
+
+    expect(listener).toHaveBeenCalledTimes(2);
+    expect(listener).toHaveBeenCalledWith(4);
+  });
+
+  test('Batch should handle multiple errors and throw aggregated error', () => {
+    const cellA = Cell.source(1);
+    const cellB = Cell.source(2);
+    const errorListenerA = vi.fn(() => {
+      throw new Error('Error A');
+    });
+    const errorListenerB = vi.fn(() => {
+      throw new Error('Error B');
+    });
+
+    cellA.listen(errorListenerA);
+    cellB.listen(errorListenerB);
+
+    expect(() => {
+      Cell.batch(() => {
+        cellA.set(10);
+        cellB.set(20);
+      });
+    }).toThrow('Errors occurred during cell update cycle');
+
+    // Both listeners should have been called despite errors
+    expect(errorListenerA).toHaveBeenCalled();
+    expect(errorListenerB).toHaveBeenCalled();
+  });
+
+  test('Batch with derived cells reading from multiple sources', () => {
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const c = Cell.source(3);
+
+    const derivedCallback = vi.fn();
+    const derived = Cell.derived(() => {
+      derivedCallback();
+      return a.get() + b.get() + c.get();
+    });
+
+    expect(derived.get()).toBe(6);
+    expect(derivedCallback).toHaveBeenCalledTimes(1);
+
+    Cell.batch(() => {
+      a.set(10);
+      b.set(20);
+      c.set(30);
+    });
+
+    expect(derived.get()).toBe(60);
+    // Derived should only be recomputed once, not three times
+    expect(derivedCallback).toHaveBeenCalledTimes(2);
+  });
+
+  test('Nested batch with error should not break outer batch', () => {
+    const cell = Cell.source(1);
+    const listener = vi.fn();
+    cell.listen(listener);
+
+    expect(() => {
+      Cell.batch(() => {
+        cell.set(10);
+
+        try {
+          Cell.batch(() => {
+            cell.set(20);
+            throw new Error('Inner batch error');
+          });
+        } catch (e) {
+          // Catch the error from inner batch
+        }
+
+        cell.set(30);
+      });
+    }).not.toThrow();
+
+    expect(listener).toHaveBeenCalled();
+    expect(cell.get()).toBe(30);
+  });
+
+  test('Batch should preserve listener order (priority)', () => {
+    const cell = Cell.source(0);
+    let order = '';
+
+    cell.listen(() => (order += 'C'), { priority: 1 });
+    cell.listen(() => (order += 'B'), { priority: 2 });
+    cell.listen(() => (order += 'A'), { priority: 3 });
+
+    Cell.batch(() => {
+      cell.set(1);
+      cell.set(2);
+    });
+
+    expect(order).toBe('ABC');
+  });
+
+  test('Batch with conditional derived cell updates', () => {
+    const toggle = Cell.source(true);
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+
+    const derivedCallback = vi.fn();
+    const derived = Cell.derived(() => {
+      derivedCallback();
+      return toggle.get() ? a.get() : b.get();
+    });
+
+    expect(derived.get()).toBe(1);
+    expect(derivedCallback).toHaveBeenCalledTimes(1);
+
+    // When toggle is true, changing `b` should not trigger derived recompuation
+    Cell.batch(() => {
+      b.set(20);
+      b.set(30);
+    });
+
+    expect(derived.get()).toBe(1);
+    expect(derivedCallback).toHaveBeenCalledTimes(1); // No additional computation
+
+    // When we change toggle and a, derived should update once
+    Cell.batch(() => {
+      toggle.set(false);
+      a.set(100);
+      b.set(50);
+    });
+
+    expect(derived.get()).toBe(50);
+    expect(derivedCallback).toHaveBeenCalledTimes(2);
+  });
+
+  test('Batch should handle setting same value multiple times with no-op', () => {
+    const cell = Cell.source(5);
+    const listener = vi.fn();
+    cell.listen(listener);
+
+    Cell.batch(() => {
+      cell.set(10);
+      cell.set(5); // Back to original value
+    });
+
+    // The listener should still be called because the value changed during the batch
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(cell.get()).toBe(5);
   });
 });
 
