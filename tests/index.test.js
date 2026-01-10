@@ -702,6 +702,25 @@ describe('Derived cells', () => {
 
     expect(selection.get()).toBe('B:1');
   });
+
+  test('Glitch Test: intermediate derived dependency with large depth', () => {
+    const a = Cell.source(0);
+    const b = Cell.source(1);
+    const c = Cell.source(2);
+    const d = Cell.derived(() => b.get() * 2);
+    const e = Cell.derived(() => d.get() * 2);
+    const f = Cell.derived(() => e.get() * 2);
+    const g = Cell.derived(() => f.get() * 2);
+    const h = Cell.derived(() => b.get() * g.get());
+    const i = Cell.derived(() => a.get() + h.get() + c.get());
+
+    expect(h.get()).toBe(16);
+    expect(i.get()).toBe(18);
+
+    a.set(10);
+    expect(h.get()).toBe(16);
+    expect(i.get()).toBe(28);
+  });
 });
 
 describe('Nested cells', () => {

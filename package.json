@@ -1,6 +1,6 @@
 {
   "name": "@adbl/cells",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "description": "A simple implementation of reactive updates for JavaScript",
   "main": "index.js",
   "private": false,

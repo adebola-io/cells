@@ -126,6 +126,7 @@ const GlobalTrackingContext = {};
 let CurrentTrackingContext = GlobalTrackingContext;
 const Depth = Symbol();
 const IsScheduled = Symbol();
+const Deferred = Symbol();
 
 /**
  * Tracks cells that need to be updated during the update cycle.
@@ -160,11 +161,17 @@ function triggerUpdate() {
       if (cell instanceof DerivedCell) {
         const depth = cell[Depth];
         if (depth > currentDepth + 1) {
+          if (cell[Deferred]) {
+            currentDepth++;
+          } else {
+            cell[Deferred] = true;
+          }
           // Move nodes with higher depths to the end of the array so they
           // are processed last.
           UPDATE_BUFFER.push(cell);
           continue;
         }
+        cell[Deferred] = false;
         if (depth > currentDepth) currentDepth = depth;
         const newValue = cell.computedFn();
         // @ts-expect-error: wvalue is protected.
@@ -183,11 +190,6 @@ function triggerUpdate() {
 
         UPDATE_BUFFER.push(computedCell);
         computedCell[IsScheduled] = true;
-      }
-      // Check the last cell.
-      const last = UPDATE_BUFFER[UPDATE_BUFFER.length - 1];
-      if (last instanceof DerivedCell && last[Depth] - 1 > currentDepth) {
-        currentDepth++;
       }
     }
     // A cell can update in another's effect, triggering a rerun
@@ -918,6 +920,7 @@ export class Cell {
  */
 export class DerivedCell extends Cell {
   [Depth] = 0;
+  [Deferred] = false;
 
   /**
    * @param {() => T} computedFn - A function that generates the value of the computed.
