@@ -18,6 +18,16 @@
  */
 
 /**
+ * @template T
+ * @typedef {(track: <T>(cell: Cell<T>) => T) => T} ComputedFn
+ */
+
+/**
+ * @template T
+ * @typedef {(signal: AbortSignal, get: <T>(cell: Cell<T>) => T) => T | Promise<T>} AsyncComputedFn
+ */
+
+/**
  * @template Output
  * @typedef {() => Promise<Output | null>} SimplePromiseFn
  */
@@ -174,6 +184,9 @@ function triggerUpdate() {
         cell[Deferred] = false;
         if (depth > currentDepth) currentDepth = depth;
         const newValue = cell.computedFn();
+        if (cell instanceof AsyncDerivedCell) {
+          continue;
+        }
         // @ts-expect-error: wvalue is protected.
         if (deepEqual(cell.wvalue, newValue)) {
           cell[IsScheduled] = false;
@@ -394,14 +407,6 @@ export class Cell {
    * @protected @type T
    */
   wvalue = /** @type {T} */ (null);
-
-  /**
-   * @protected
-   * @param {T} value
-   */
-  setValue(value) {
-    this.wvalue = value;
-  }
 
   /**
    * Overrides `Object.prototype.valueOf()` to return the value stored in the Cell.
@@ -691,6 +696,13 @@ export class Cell {
   static context = () => new LocalContext();
 
   /**
+   * @template U
+   * @param {AsyncComputedFn<U>} callback
+   * @returns {AsyncDerivedCell<U>}
+   */
+  static derivedAsync = (callback) => new AsyncDerivedCell(callback);
+
+  /**
    * Executes a function within a specific LocalContext.
    * Any effects (`.listen`) or derived cells (`Cell.derived`) created synchronously
    * within the callback will be attached to the provided context.
@@ -934,20 +946,20 @@ export class DerivedCell extends Cell {
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
       ACTIVE_DERIVED_CTX.push([this, 0]);
-      let value = this.wvalue;
       try {
-        value = computedFn();
+        return computedFn();
       } catch (e) {
         if (e instanceof Error) cellErrors.push(e);
+        return this.wvalue;
+      } finally {
+        const i = /** @type {[this, number]} */ (ACTIVE_DERIVED_CTX.pop());
+        const [, depth] = i;
+        if (depth + 1 > this[Depth]) this[Depth] = depth + 1;
       }
-      const [, depth] = /** @type {[this, number]} */ (
-        ACTIVE_DERIVED_CTX.pop()
-      );
-      if (depth + 1 > this[Depth]) this[Depth] = depth + 1;
-      return value;
     };
 
-    this.setValue(derivationWrapper());
+    /** @protected @type {T} */
+    this.wvalue = derivationWrapper();
     this.computedFn = /** @type {() => T} */ (derivationWrapper);
     throwAnyErrors();
   }
@@ -995,8 +1007,9 @@ export class SourceCell extends Cell {
   constructor(value, options) {
     super();
 
-    if (options !== undefined) this.options = options;
-    this.setValue(value);
+    /** @protected */
+    this.wvalue = value;
+    this.options = options;
   }
 
   peek() {
@@ -1027,7 +1040,7 @@ export class SourceCell extends Cell {
 
     if (isEqual) return;
 
-    this.setValue(value);
+    this.wvalue = value;
     this[IsScheduled] = true;
     UPDATE_BUFFER.push(this);
     if (!IS_UPDATING) triggerUpdate();
@@ -1096,6 +1109,70 @@ export class SourceCell extends Cell {
         return true;
       },
     });
+  }
+}
+
+/**
+ * @template {*} out T
+ * @extends {DerivedCell<Promise<T | null>>}
+ */
+export class AsyncDerivedCell extends DerivedCell {
+  handle;
+
+  /**
+   * @param {AsyncComputedFn<T>} fn
+   */
+  constructor(fn) {
+    const pending = Cell.source(false);
+    /** @type {SourceCell<Error | null>} */
+    const err = Cell.source(null);
+    const controller = new AbortController();
+    /** @type {{ value: Promise<T | null> }} */
+    const handle = { value: Promise.resolve(null) };
+    /**
+     * @template T
+     * @param {Cell<T>} cell
+     * @returns {T}
+     */
+    const get = (cell) => {
+      ACTIVE_DERIVED_CTX.push([this, this[Depth]]);
+      const value = cell.get();
+      ACTIVE_DERIVED_CTX.pop();
+      return value;
+    };
+
+    const asyncDerivationWrapper = async () => {
+      const previousPromise = handle.value;
+      try {
+        Cell.batch(() => {
+          pending.set(true);
+          err.set(null);
+        });
+        handle.value = Promise.resolve(fn(controller.signal, get));
+        return handle.value;
+      } catch (error) {
+        if (error instanceof Error) {
+          Cell.batch(() => {
+            err.set(error);
+            pending.set(false);
+          });
+        }
+        return previousPromise;
+      } finally {
+        pending.set(false);
+      }
+    };
+
+    super(asyncDerivationWrapper);
+    this.pending = pending;
+    this.error = err;
+    this.handle = handle;
+    this.wvalue = handle.value;
+  }
+
+  async get() {
+    this.wvalue = this.handle.value;
+    return super.get();
   }
 }
 
