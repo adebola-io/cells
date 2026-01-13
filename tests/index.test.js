@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
 import { Cell, SourceCell } from '../library/index.js';
 
 describe('Cells', () => {
@@ -1715,6 +1715,476 @@ describe('Cell.derivedAsync', () => {
 
     source.set(10);
     expect(await asyncCell.get()).toBe(30);
+  });
+
+  describe('Basic Lifecycle & State', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('pending transitions correctly during resolution', async () => {
+      const asyncCell = Cell.derivedAsync(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+        return 'A';
+      });
+
+      expect(asyncCell.pending.get()).toBe(true);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await asyncCell.get()).toBe('A');
+      expect(asyncCell.pending.get()).toBe(false);
+      expect(asyncCell.error.get()).toBe(null);
+    });
+
+    test('pending flips on dependency update', async () => {
+      const source = Cell.source(1);
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        const val = get(source);
+        await new Promise((r) => setTimeout(r, 10));
+        return val * 10;
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await asyncCell.get()).toBe(10);
+      expect(asyncCell.pending.get()).toBe(false);
+
+      source.set(2);
+      expect(asyncCell.pending.get()).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(asyncCell.pending.get()).toBe(false);
+      expect(await asyncCell.get()).toBe(20);
+    });
+
+    test('handles non-async callback', async () => {
+      const source = Cell.source(5);
+      const asyncCell = Cell.derivedAsync((get) => get(source) * 2);
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await asyncCell.get()).toBe(10);
+      expect(asyncCell.pending.get()).toBe(false);
+    });
+
+    test('stores null and undefined correctly', async () => {
+      const mode = Cell.source('null');
+      const values = [];
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        const m = get(mode);
+        await new Promise((r) => setTimeout(r, 5));
+        if (m === 'null') return null;
+        if (m === 'undefined') return undefined;
+        return 'value';
+      });
+
+      asyncCell.listen(async (promise) => values.push(await promise));
+
+      await vi.advanceTimersByTimeAsync(5);
+      expect(await asyncCell.get()).toBe(null);
+
+      mode.set('undefined');
+      await vi.advanceTimersByTimeAsync(5);
+      expect(await asyncCell.get()).toBe(undefined);
+
+      mode.set('value');
+      await vi.advanceTimersByTimeAsync(5);
+      expect(await asyncCell.get()).toBe('value');
+
+      expect(values).toContain(undefined);
+      expect(values).toContain('value');
+    });
+  });
+
+  describe('Race Conditions', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('fast request overtakes slow request', async () => {
+      const trigger = Cell.source('A');
+      const values = [];
+      let resolveA;
+      let resolveB;
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        const val = get(trigger);
+        if (val === 'A') {
+          await new Promise((r) => {
+            resolveA = r;
+          });
+          return 'A';
+        }
+        await new Promise((r) => {
+          resolveB = r;
+        });
+        return 'B';
+      });
+
+      asyncCell.listen(async (p) => values.push(await p));
+      await vi.advanceTimersByTimeAsync(10);
+
+      trigger.set('B');
+      await vi.advanceTimersByTimeAsync(10);
+
+      resolveB();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await asyncCell.get()).toBe('B');
+
+      resolveA();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await asyncCell.get()).toBe('B');
+      expect(values.filter((v) => v === 'A').length).toBe(0);
+    });
+
+    test('rapid updates only commit final result', async () => {
+      const trigger = Cell.source(0);
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        const val = get(trigger);
+        await new Promise((r) => setTimeout(r, 30 - val * 5));
+        return String.fromCharCode(65 + val);
+      });
+
+      trigger.set(0);
+      trigger.set(1);
+      trigger.set(2);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(await asyncCell.get()).toBe('C');
+    });
+
+    test('stale error is ignored when success resolves first', async () => {
+      const trigger = Cell.source('stable');
+      let resolveA;
+      let resolveB;
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        const val = get(trigger);
+        if (val === 'error') {
+          await new Promise((r) => {
+            resolveA = r;
+          });
+          throw new Error('A failed');
+        }
+        if (val === 'success') {
+          await new Promise((r) => {
+            resolveB = r;
+          });
+          return 'New';
+        }
+        return 'Stable';
+      });
+
+      await vi.advanceTimersByTimeAsync(0);
+      trigger.set('error');
+      await vi.advanceTimersByTimeAsync(10);
+
+      trigger.set('success');
+      await vi.advanceTimersByTimeAsync(10);
+
+      resolveB();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(await asyncCell.get()).toBe('New');
+      expect(asyncCell.error.get()).toBe(null);
+
+      resolveA();
+      await vi.advanceTimersByTimeAsync(20);
+      expect(asyncCell.error.get()).toBe(null);
+    });
+  });
+
+  describe('Equality Suppression', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('listeners do not fire for same primitive value', async () => {
+      const trigger = Cell.source(false);
+      const calls = [];
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        get(trigger);
+        await new Promise((r) => setTimeout(r, 10));
+        return 42;
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      asyncCell.listen(async (p) => calls.push(await p));
+
+      trigger.set(true);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(calls.length).toBe(0);
+    });
+
+    test('listeners do not fire for deeply equal objects', async () => {
+      const trigger = Cell.source(0);
+      const calls = [];
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        get(trigger);
+        await new Promise((r) => setTimeout(r, 10));
+        return { user: { id: 1 } };
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      asyncCell.listen(async (p) => calls.push(await p));
+
+      trigger.set(1);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(calls.length).toBe(0);
+    });
+
+    test('listeners fire for different arrays', async () => {
+      const trigger = Cell.source(0);
+      const calls = [];
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        const val = get(trigger);
+        await new Promise((r) => setTimeout(r, 10));
+        return val === 0 ? [1, 2] : [1, 2, 3];
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      asyncCell.listen(async (p) => calls.push(await p));
+
+      trigger.set(1);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls[calls.length - 1]).toEqual([1, 2, 3]);
+    });
+  });
+
+  describe('Error Handling', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('error state is set and previous value preserved (SWR)', async () => {
+      const shouldError = Cell.source(false);
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        if (get(shouldError)) throw new Error('Computation failed');
+        await new Promise((r) => setTimeout(r, 10));
+        return 'valid';
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await asyncCell.get()).toBe('valid');
+
+      shouldError.set(true);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(asyncCell.error.get()).toBeInstanceOf(Error);
+      expect(await asyncCell.get()).toBe('valid');
+    });
+
+    test('error clears on successful recovery', async () => {
+      const shouldError = Cell.source(true);
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        if (get(shouldError)) throw new Error('Failed');
+        await new Promise((r) => setTimeout(r, 10));
+        return 'recovered';
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(asyncCell.error.get()).toBeInstanceOf(Error);
+
+      shouldError.set(false);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(asyncCell.error.get()).toBe(null);
+      expect(await asyncCell.get()).toBe('recovered');
+    });
+  });
+
+  describe('AbortSignal', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('signal is passed and initially not aborted', async () => {
+      let capturedSignal = null;
+
+      const asyncCell = Cell.derivedAsync(async (get, signal) => {
+        capturedSignal = signal;
+        await new Promise((r) => setTimeout(r, 10));
+        return 'done';
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(capturedSignal).toBeInstanceOf(AbortSignal);
+      expect(capturedSignal.aborted).toBe(false);
+    });
+
+    test('AbortError is handled gracefully', async () => {
+      const trigger = Cell.source(1);
+
+      const asyncCell = Cell.derivedAsync(async (get, signal) => {
+        const val = get(trigger);
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => resolve(`Result ${val}`), 100);
+          signal.addEventListener('abort', () => {
+            clearTimeout(timeout);
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+        return `Result ${val}`;
+      });
+
+      asyncCell.get();
+      await vi.advanceTimersByTimeAsync(10);
+      trigger.set(2);
+      await vi.advanceTimersByTimeAsync(150);
+
+      expect(await asyncCell.get()).toBe('Result 2');
+    });
+  });
+
+  describe('Chaining', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('async to async chaining works', async () => {
+      const source = Cell.source(5);
+
+      const asyncA = Cell.derivedAsync(async (get) => {
+        await new Promise((r) => setTimeout(r, 20));
+        return get(source) * 2;
+      });
+
+      const asyncB = Cell.derivedAsync(async (get) => {
+        const aValue = await get(asyncA);
+        await new Promise((r) => setTimeout(r, 20));
+        return aValue + 100;
+      });
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await asyncB.get()).toBe(110);
+
+      source.set(10);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(await asyncA.get()).toBe(20);
+      expect(await asyncB.get()).toBe(120);
+    });
+
+    test('intermediate results are discarded on rapid updates', async () => {
+      const source = Cell.source(1);
+
+      const asyncA = Cell.derivedAsync(async (get) => {
+        const val = get(source);
+        await new Promise((r) => setTimeout(r, 30));
+        return val * 10;
+      });
+
+      const asyncB = Cell.derivedAsync(async (get) => {
+        const aValue = await get(asyncA);
+        await new Promise((r) => setTimeout(r, 10));
+        return aValue + 1;
+      });
+
+      source.set(1);
+      source.set(2);
+      await vi.advanceTimersByTimeAsync(200);
+
+      expect(await asyncA.get()).toBe(20);
+      expect(await asyncB.get()).toBe(21);
+    });
+  });
+
+  describe('Listeners', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('listener fires on each value change', async () => {
+      const source = Cell.source(1);
+      const calls = [];
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return get(source) * 2;
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      asyncCell.listen(async (p) => calls.push(await p));
+
+      source.set(2);
+      await vi.advanceTimersByTimeAsync(10);
+      source.set(3);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(calls).toEqual([4, 6]);
+    });
+
+    test('removed listener is not called', async () => {
+      const source = Cell.source(1);
+      const calls = [];
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return get(source);
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      const stop = asyncCell.listen(async (p) => calls.push(await p));
+
+      source.set(2);
+      await vi.advanceTimersByTimeAsync(10);
+      stop();
+      source.set(3);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(calls).toEqual([2]);
+    });
+
+    test('multiple listeners all receive updates', async () => {
+      const source = Cell.source(1);
+      const c1 = [];
+      const c2 = [];
+      const c3 = [];
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return get(source) * 10;
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      asyncCell.listen(async (p) => c1.push(await p));
+      asyncCell.listen(async (p) => c2.push(await p));
+      asyncCell.listen(async (p) => c3.push(await p));
+
+      source.set(2);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(c1).toEqual([20]);
+      expect(c2).toEqual([20]);
+      expect(c3).toEqual([20]);
+    });
+  });
+
+  describe('Batching', () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    test('batched updates trigger single recomputation', async () => {
+      const s1 = Cell.source(1);
+      const s2 = Cell.source(2);
+      const computeFn = vi.fn(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return get(s1) + get(s2);
+      });
+
+      const asyncCell = Cell.derivedAsync(computeFn);
+      await vi.advanceTimersByTimeAsync(10);
+      expect(computeFn).toHaveBeenCalledTimes(1);
+
+      Cell.batch(() => {
+        s1.set(10);
+        s2.set(20);
+      });
+
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(computeFn).toHaveBeenCalledTimes(2);
+      expect(await asyncCell.get()).toBe(30);
+    });
   });
 });
 
