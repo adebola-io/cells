@@ -1184,8 +1184,8 @@ export class SourceCell extends Cell {
  * ```
  */
 export class AsyncDerivedCell extends DerivedCell {
-  /** @type {Set<Promise<any>>} */
-  #upstream = new Set();
+  /** @type {Map<Promise<any>, Promise<void>>} */
+  #upstream = new Map();
 
   /**
    * A cell that indicates whether the async computation is currently running.
@@ -1253,9 +1253,9 @@ export class AsyncDerivedCell extends DerivedCell {
         });
       this.wvalue = current;
       const valueHasChanged = Promise.all([baseline, current]).then(
-        ([prev, curr]) => !deepEqual(prev, curr)
+        ([prev, curr]) => !deepEqual(prev, curr),
       );
-      this.#notify(current, valueHasChanged);
+      this.#notify(current, valueHasChanged, controller.signal);
 
       current.finally(async () => {
         if (this.wvalue !== current) return;
@@ -1273,13 +1273,22 @@ export class AsyncDerivedCell extends DerivedCell {
   /**
    * @param {Promise<any>} promise
    * @param {Promise<boolean>} valueHasChanged
+   * @param {AbortSignal} signal
    */
-  #notify(promise, valueHasChanged) {
+  #notify(promise, valueHasChanged, signal) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
       if (child.#upstream.has(promise)) return;
 
-      child.#upstream.add(promise);
+      // if the parent discards this promise, we do not want to be stuck waiting for it.
+      const discarded = new Promise((resolve) => {
+        signal.addEventListener('abort', resolve, { once: true });
+        promise.finally(() => {
+          signal.removeEventListener('abort', resolve);
+        });
+      });
+
+      child.#upstream.set(promise, discarded);
       promise.finally(async () => {
         child.#upstream.delete(promise);
         if (!child[IsScheduled] && (await valueHasChanged)) {
@@ -1288,18 +1297,19 @@ export class AsyncDerivedCell extends DerivedCell {
         }
       });
 
-      child.#notify(promise, valueHasChanged);
-    }
-  }
-  async #waitForUpstream() {
-    while (this.#upstream.size) {
-      await Promise.allSettled([...this.#upstream]);
+      child.#notify(promise, valueHasChanged, signal);
     }
   }
 
   async get() {
     super.get(); // Forces a dependency registration in sync time.
-    await this.#waitForUpstream();
+    while (this.#upstream.size) {
+      await Promise.allSettled(
+        this.#upstream.entries().map(([value, discarded]) => {
+          return Promise.race([value, discarded]);
+        }),
+      );
+    }
     return this.wvalue;
   }
 }
