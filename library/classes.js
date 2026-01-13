@@ -23,11 +23,6 @@
  */
 
 /**
- * @template T
- * @typedef {(signal: AbortSignal, get: <T>(cell: Cell<T>) => T) => T | Promise<T>} AsyncComputedFn
- */
-
-/**
  * @template Output
  * @typedef {() => Promise<Output | null>} SimplePromiseFn
  */
@@ -185,6 +180,16 @@ function triggerUpdate() {
         if (depth > currentDepth) currentDepth = depth;
         const newValue = cell.computedFn();
         if (cell instanceof AsyncDerivedCell) {
+          // async cells will handle propagation manually.
+          cell[IsScheduled] = false;
+          const computedDependents = cell.derivations;
+          for (const computedCell of computedDependents) {
+            if (cell instanceof AsyncDerivedCell) continue;
+            if (computedCell[IsScheduled]) continue;
+
+            UPDATE_BUFFER.push(computedCell);
+            computedCell[IsScheduled] = true;
+          }
           continue;
         }
         // @ts-expect-error: wvalue is protected.
@@ -391,7 +396,7 @@ export class Cell {
   constructor() {
     if (new.target === Cell) {
       throw new Error(
-        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.',
+        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.'
       );
     }
     /**
@@ -486,7 +491,7 @@ export class Cell {
 
     if (options?.name && this.isListeningTo(options.name)) {
       throw new Error(
-        `An effect with the name "${options.name}" is already listening to this cell.`,
+        `An effect with the name "${options.name}" is already listening to this cell.`
       );
     }
 
@@ -634,7 +639,7 @@ export class Cell {
     }
     if (hasUndefinedEffect) {
       this.#effects = this.#effects.filter(
-        (effect) => effect.callback !== undefined,
+        (effect) => effect.callback !== undefined
       );
     }
   }
@@ -696,9 +701,36 @@ export class Cell {
   static context = () => new LocalContext();
 
   /**
+   * Creates a new AsyncDerivedCell that computes its value asynchronously.
+   * The cell automatically re-computes when any of its dependencies change,
+   * with built-in support for cancellation, loading state, and error handling.
+   *
    * @template U
-   * @param {AsyncComputedFn<U>} callback
-   * @returns {AsyncDerivedCell<U>}
+   * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => Promise<U>} callback - An async function that computes the derived value.
+   *   - `get`: A function to read cell values while tracking them as dependencies.
+   *   - `signal`: An AbortSignal that is aborted when a new computation starts,
+   *     useful for cancelling in-flight requests.
+   * @returns {AsyncDerivedCell<U>} A new AsyncDerivedCell instance.
+   *
+   * @example
+   * ```javascript
+   * import { Cell } from '@adbl/cells';
+   *
+   * const userId = Cell.source(1);
+   *
+   * const userData = Cell.derivedAsync(async (get, signal) => {
+   *   const id = get(userId); // Tracks userId as a dependency
+   *   const response = await fetch(`/api/users/${id}`, { signal });
+   *   return response.json();
+   * });
+   *
+   * // Access loading and error states
+   * userData.pending.listen((loading) => console.log('Loading:', loading));
+   * userData.error.listen((err) => err && console.error(err));
+   *
+   * // Get the async value
+   * const data = await userData.get();
+   * ```
    */
   static derivedAsync = (callback) => new AsyncDerivedCell(callback);
 
@@ -896,7 +928,7 @@ export class Cell {
         const currentController = controller;
         try {
           const result = await getter.bind(currentController)(
-            /** @type {X} */ (newInput ?? initialInput),
+            /** @type {X} */ (newInput ?? initialInput)
           );
           if (currentController?.signal.aborted) return;
           data.set(result);
@@ -1113,66 +1145,162 @@ export class SourceCell extends Cell {
 }
 
 /**
- * @template {*} out T
+ * A derived cell that computes its value asynchronously.
+ *
+ * AsyncDerivedCell extends the reactive paradigm to asynchronous operations,
+ * automatically re-running the async computation when dependencies change.
+ * It provides built-in state management for loading and error states.
+ *
+ * Key features:
+ * - Automatic dependency tracking via the `get` function
+ * - Automatic cancellation of in-flight operations when dependencies change
+ * - Built-in `pending` cell for loading state
+ * - Built-in `error` cell for error handling
+ * - Race condition prevention through AbortSignal
+ *
+ * @template {*} out T - The type of the resolved async value.
  * @extends {DerivedCell<Promise<T | null>>}
+ *
+ * @example
+ * ```javascript
+ * const searchQuery = Cell.source('');
+ *
+ * const searchResults = Cell.derivedAsync(async (get, signal) => {
+ *   const query = get(searchQuery);
+ *   if (!query) return [];
+ *
+ *   const response = await fetch(`/api/search?q=${query}`, { signal });
+ *   return response.json();
+ * });
+ *
+ * // React to state changes
+ * searchResults.pending.listen((loading) => {
+ *   showSpinner(loading);
+ * });
+ *
+ * searchResults.error.listen((error) => {
+ *   if (error) showError(error.message);
+ * });
+ * ```
  */
 export class AsyncDerivedCell extends DerivedCell {
-  handle;
+  /** @type {Set<Promise<any>>} */
+  #upstream = new Set();
 
   /**
-   * @param {AsyncComputedFn<T>} fn
+   * A cell that indicates whether the async computation is currently running.
+   * @type {SourceCell<boolean>}
+   */
+  pending = Cell.source(true);
+
+  /**
+   * A cell that holds any error thrown during the async computation.
+   * Resets to `null` when a new computation starts.
+   * @type {SourceCell<Error | null>}
+   */
+  error = Cell.source(null);
+
+  /**
+   * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => Promise<T>} fn
    */
   constructor(fn) {
-    const pending = Cell.source(false);
-    /** @type {SourceCell<Error | null>} */
-    const err = Cell.source(null);
-    const controller = new AbortController();
-    /** @type {{ value: Promise<T | null> }} */
-    const handle = { value: Promise.resolve(null) };
+    /** @type {Promise<T | null>} */
+    let lastStablePromise = Promise.resolve(null);
+    super(() => lastStablePromise);
+    /** @type [this, number] */
+    let derivedCtx = [this, this[Depth]];
+
     /**
      * @template T
      * @param {Cell<T>} cell
      * @returns {T}
      */
     const get = (cell) => {
-      ACTIVE_DERIVED_CTX.push([this, this[Depth]]);
+      ACTIVE_DERIVED_CTX.push(derivedCtx);
       const value = cell.get();
       ACTIVE_DERIVED_CTX.pop();
       return value;
     };
 
-    const asyncDerivationWrapper = async () => {
-      const previousPromise = handle.value;
-      try {
-        Cell.batch(() => {
-          pending.set(true);
-          err.set(null);
-        });
-        handle.value = Promise.resolve(fn(controller.signal, get));
-        return handle.value;
-      } catch (error) {
-        if (error instanceof Error) {
-          Cell.batch(() => {
-            err.set(error);
-            pending.set(false);
-          });
-        }
-        return previousPromise;
-      } finally {
-        pending.set(false);
-      }
-    };
+    /** @type {AbortController | undefined} */
+    let controller;
 
-    super(asyncDerivationWrapper);
-    this.pending = pending;
-    this.error = err;
-    this.handle = handle;
-    this.wvalue = handle.value;
+    this.computedFn = async () => {
+      const baseline = lastStablePromise;
+      derivedCtx = [this, this[Depth]];
+
+      Cell.batch(() => {
+        this.pending.set(true);
+        this.error.set(null);
+      });
+
+      if (controller) controller.abort();
+      controller = new AbortController();
+
+      const current = Promise.resolve(fn(get, controller.signal))
+        .catch((error) => {
+          if (this.wvalue === current) {
+            Cell.batch(() => {
+              this.pending.set(false);
+              this.error.set(error);
+            });
+          }
+          return baseline;
+        })
+        .then(async (value) => {
+          if (this.wvalue === current) this.pending.set(false);
+          return value;
+        });
+      this.wvalue = current;
+      const valueHasChanged = Promise.all([baseline, current]).then(
+        ([prev, curr]) => !deepEqual(prev, curr)
+      );
+      this.#notify(current, valueHasChanged);
+
+      current.finally(async () => {
+        if (this.wvalue !== current) return;
+        lastStablePromise = current;
+        if (derivedCtx[1] + 1 > this[Depth]) this[Depth] = derivedCtx[1] + 1;
+        if (await valueHasChanged) this.update();
+      });
+
+      return this.wvalue;
+    };
+    // First call.
+    this.computedFn();
+  }
+
+  /**
+   * @param {Promise<any>} promise
+   * @param {Promise<boolean>} valueHasChanged
+   */
+  #notify(promise, valueHasChanged) {
+    for (const child of this.derivations) {
+      if (!(child instanceof AsyncDerivedCell)) continue;
+      if (child.#upstream.has(promise)) return;
+
+      child.#upstream.add(promise);
+      promise.finally(async () => {
+        child.#upstream.delete(promise);
+        if (!child[IsScheduled] && (await valueHasChanged)) {
+          UPDATE_BUFFER.push(child);
+          if (!IS_UPDATING) triggerUpdate();
+        }
+      });
+
+      child.#notify(promise, valueHasChanged);
+    }
+  }
+  async #waitForUpstream() {
+    while (this.#upstream.size) {
+      await Promise.allSettled([...this.#upstream]);
+    }
   }
 
   async get() {
-    this.wvalue = this.handle.value;
-    return super.get();
+    super.get(); // Forces a dependency registration in sync time.
+    await this.#waitForUpstream();
+    return this.wvalue;
   }
 }
 

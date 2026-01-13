@@ -398,7 +398,6 @@ describe('Derived cells', () => {
     const cell1 = Cell.source(1);
     const cell2 = Cell.source(2); // 4
     const derived1 = Cell.derived(() => cell2.get() + 1);
-    console.log('derived1:', derived1);
     const derived2 = Cell.derived(() => derived1.get() + cell1.get());
 
     cell2.set(derived2.get());
@@ -734,7 +733,6 @@ describe('Nested cells', () => {
     expect(derived.get()).toBe(12);
 
     cell2.get().b = 20; // Deep reactivity test
-    console.log('Changed to ', cell2.get(), cell.get(), derived.get());
     expect(derived.get()).toBe(22);
   });
 
@@ -772,7 +770,6 @@ describe('Nested cells', () => {
   test('Cell of array type should be reactive', () => {
     const cell = Cell.source([1, 2, 3]);
 
-    console.log(cell.get());
     const sum = Cell.derived(() => cell.get().reduce((a, b) => a + b, 0));
     expect(sum.get()).toBe(6);
 
@@ -1179,9 +1176,24 @@ describe('Batched effects', () => {
     const cell = Cell.source(0);
     let order = '';
 
-    cell.listen(() => (order += 'C'), { priority: 1 });
-    cell.listen(() => (order += 'B'), { priority: 2 });
-    cell.listen(() => (order += 'A'), { priority: 3 });
+    cell.listen(
+      () => {
+        order += 'C';
+      },
+      { priority: 1 },
+    );
+    cell.listen(
+      () => {
+        order += 'B';
+      },
+      { priority: 2 },
+    );
+    cell.listen(
+      () => {
+        order += 'A';
+      },
+      { priority: 3 },
+    );
 
     Cell.batch(() => {
       cell.set(1);
@@ -1439,6 +1451,270 @@ describe('Cell.async', () => {
     await run(2);
 
     expect(abortedSignals).toContain(1);
+  });
+});
+
+describe('Cell.derivedAsync', () => {
+  test('derived async cells should be created with sync callbacks', async () => {
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const c = Cell.derived(() => a.get() * b.get());
+    expect(c.get()).toBe(2);
+
+    const d = Cell.derivedAsync((get) => {
+      return get(c) * 3;
+    });
+
+    const e = Cell.derived(() => {
+      return c.get() * c.get();
+    });
+
+    expect(await d.get()).toBe(6);
+    expect(e.get()).toBe(4);
+
+    a.set(9);
+    expect(e.get()).toBe(324);
+    expect(await d.get()).toBe(54);
+  });
+
+  test('derived async cells should be created with async callbacks', async () => {
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const c = Cell.derivedAsync(async (get) => {
+      await new Promise((resolve) => setTimeout(resolve));
+      return get(a) * get(b);
+    });
+    const d = Cell.derived(() => {
+      return a.get() * b.get() * b.get();
+    });
+
+    expect(await c.get()).toBe(2);
+    expect(d.get()).toBe(4);
+    a.set(7);
+    expect(d.get()).toBe(28);
+    expect(await c.get()).toBe(14);
+  });
+
+  test('derived async cells should trigger listen callbacks', async () => {
+    const a = Cell.source(10);
+    const b = Cell.source(11);
+    const c = Cell.derivedAsync(async (get) => {
+      await new Promise((resolve) => setTimeout(resolve));
+      return get(a) * get(b);
+    });
+    const d = Cell.derived(() => {
+      return a.get() + b.get();
+    });
+    expect(d.get()).toBe(21);
+    expect(await c.get()).toBe(110);
+
+    const callback = vi.fn();
+    c.listen(async (value) => {
+      callback(await value);
+    });
+
+    b.set(10);
+    expect(await c.get()).toBe(100);
+    expect(d.get()).toBe(20);
+    expect(callback).toHaveBeenCalledTimes(1);
+    expect(callback).toHaveBeenCalledWith(100);
+  });
+
+  test('pending state should transition correctly during async computation', async () => {
+    const source = Cell.source(5);
+    const asyncCell = Cell.derivedAsync(async (get) => {
+      await new Promise((resolve) => setTimeout(resolve));
+      return get(source) * 2;
+    });
+
+    expect(asyncCell.pending.get()).toBe(true);
+
+    await asyncCell.get();
+    expect(asyncCell.pending.get()).toBe(false);
+
+    source.set(10);
+    expect(asyncCell.pending.get()).toBe(true);
+
+    await asyncCell.get();
+    expect(asyncCell.pending.get()).toBe(false);
+    expect(await asyncCell.get()).toBe(20);
+  });
+
+  test('error state should be set when async computation throws', async () => {
+    const shouldError = Cell.source(false);
+    const asyncCell = Cell.derivedAsync(async (get) => {
+      if (get(shouldError)) {
+        throw new Error('Async computation failed');
+      }
+      return 'success';
+    });
+
+    // Initially no error
+    await asyncCell.get();
+    expect(asyncCell.error.get()).toBe(null);
+
+    // Trigger an error
+    shouldError.set(true);
+    await asyncCell.get();
+    expect(asyncCell.error.get()).toBeInstanceOf(Error);
+    expect(asyncCell.error.get()?.message).toBe('Async computation failed');
+
+    // Error should clear on successful computation
+    shouldError.set(false);
+    await asyncCell.get();
+    expect(asyncCell.error.get()).toBe(null);
+  });
+
+  test('should track multiple dependencies correctly', async () => {
+    const a = Cell.source(2);
+    const b = Cell.source(3);
+    const c = Cell.source(4);
+    const computeFn = vi.fn(async (get) => {
+      await new Promise((resolve) => setTimeout(resolve));
+      return get(a) + get(b) + get(c);
+    });
+
+    const asyncCell = Cell.derivedAsync(computeFn);
+    expect(await asyncCell.get()).toBe(9);
+    expect(computeFn).toHaveBeenCalledTimes(1);
+
+    // Changing any dependency should trigger recomputation
+    a.set(10);
+    expect(await asyncCell.get()).toBe(17);
+    expect(computeFn).toHaveBeenCalledTimes(2);
+
+    b.set(20);
+    expect(await asyncCell.get()).toBe(34);
+    expect(computeFn).toHaveBeenCalledTimes(3);
+
+    c.set(100);
+    expect(await asyncCell.get()).toBe(130);
+    expect(computeFn).toHaveBeenCalledTimes(4);
+  });
+
+  test('should handle rapid dependency changes', async () => {
+    const source = Cell.source(0);
+    const computeFn = vi.fn(async (get) => {
+      await new Promise((resolve) => setTimeout(resolve));
+      return get(source) * 2;
+    });
+
+    const asyncCell = Cell.derivedAsync(computeFn);
+
+    // Rapidly change values
+    source.set(1);
+    source.set(2);
+    source.set(3);
+    source.set(4);
+    source.set(5);
+
+    // The final value should reflect the last source value
+    expect(await asyncCell.get()).toBe(10);
+  });
+
+  test('should work with chained async derived cells', async () => {
+    const source = Cell.source(5);
+
+    const firstAsync = Cell.derivedAsync(async (get) => {
+      await new Promise((resolve) => setTimeout(resolve));
+      return get(source) * 2;
+    });
+
+    const secondAsync = Cell.derivedAsync(async (get) => {
+      const firstValue = await get(firstAsync);
+      await new Promise((resolve) => setTimeout(resolve));
+      return firstValue + 100;
+    });
+
+    expect(await secondAsync.get()).toBe(110); // (5 * 2) + 100
+
+    source.set(10);
+    expect(await secondAsync.get()).toBe(120); // (10 * 2) + 100
+  });
+
+  test('should handle async computation returning different types', async () => {
+    const mode = Cell.source('number');
+
+    const asyncCell = Cell.derivedAsync(async (get) => {
+      const currentMode = get(mode);
+      await new Promise((resolve) => setTimeout(resolve));
+
+      if (currentMode === 'number') return 42;
+      if (currentMode === 'string') return 'hello';
+      if (currentMode === 'object') return { key: 'value' };
+      return null;
+    });
+
+    expect(await asyncCell.get()).toBe(42);
+
+    mode.set('string');
+    expect(await asyncCell.get()).toBe('hello');
+
+    mode.set('object');
+    expect(await asyncCell.get()).toEqual({ key: 'value' });
+
+    mode.set('null');
+    expect(await asyncCell.get()).toBe(null);
+  });
+
+  test('error cell should be listenable for error handling patterns', async () => {
+    const shouldFail = Cell.source(false);
+    const errorStates = [];
+
+    const asyncCell = Cell.derivedAsync(async (get) => {
+      if (get(shouldFail)) {
+        throw new Error('Test failure');
+      }
+      return 'ok';
+    });
+
+    asyncCell.error.listen((err) => {
+      errorStates.push(err);
+    });
+
+    await asyncCell.get();
+    expect(errorStates.length).toBe(0);
+
+    shouldFail.set(true);
+    await asyncCell.get();
+
+    expect(errorStates.some((e) => e instanceof Error)).toBe(true);
+  });
+
+  test('should work correctly with Cell.batch', async () => {
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const computeFn = vi.fn(async (get) => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return get(a) + get(b);
+    });
+
+    const asyncCell = Cell.derivedAsync(computeFn);
+    expect(await asyncCell.get()).toBe(3);
+    expect(computeFn).toHaveBeenCalledTimes(1);
+
+    Cell.batch(() => {
+      a.set(10);
+      b.set(20);
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(await asyncCell.get()).toBe(30);
+    expect(computeFn).toHaveBeenCalledTimes(2);
+  });
+
+  test('should handle async computation that returns a promise', async () => {
+    const source = Cell.source(7);
+
+    const asyncCell = Cell.derivedAsync(async (get) => {
+      const value = get(source);
+      return Promise.resolve(value * 3);
+    });
+
+    expect(await asyncCell.get()).toBe(21);
+
+    source.set(10);
+    expect(await asyncCell.get()).toBe(30);
   });
 });
 
