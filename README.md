@@ -72,7 +72,7 @@ count.set(3); // Output: "Count changed to: 3"
 count.set(7); // Output: "Count changed to: 7"
 ```
 
-### 5. Batch Updates
+### 4. Batch Updates
 
 When you need to perform multiple updates but only want to trigger effects once, you can use batch updates to optimize performance:
 
@@ -94,75 +94,7 @@ Cell.batch(() => {
 // Output: "Update occurred" (only once)
 ```
 
-### 6. Async Operations
-
-Cells provides utilities for handling asynchronous operations, making it easy to manage loading states, data, and errors:
-
-```javascript
-const fetchUser = Cell.async(async (userId) => {
-  const response = await fetch(`https://api.example.com/users/${userId}`);
-  return response.json();
-});
-
-const { pending, data, error, run } = fetchUser;
-
-pending.listen((isPending) => {
-  console.log(isPending ? 'Loading...' : 'Done!');
-});
-
-data.listen((userData) => {
-  if (userData) {
-    console.log('User data:', userData);
-  }
-});
-
-run(123); // Triggers the async operation
-```
-
-#### Automatic Abort of Previous Operations
-
-When you call `run()` multiple times on the same async cell, any previous ongoing async operations are automatically aborted. This prevents race conditions and ensures that only the result of the latest `run()` call is applied.
-
-Additionally, the getter function receives an `AbortSignal` via `this.signal`, which you can use to cancel long-running operations or check for abortion:
-
-```javascript
-const fetchUser = Cell.async(async function (userId) {
-  const response = await fetch(`https://api.example.com/users/${userId}`, {
-    signal: this.signal, // Pass the abort signal to fetch
-  });
-  return response.json();
-});
-
-const { data, run } = fetchUser;
-
-// Start first request
-run(123);
-
-// Start second request - this aborts the first
-run(456);
-
-// Only the result of the second request (user 456) will be applied
-```
-
-### 7. Flattening
-
-Cells offers utility functions to work with nested cell structures, making it easier to handle complex state shapes:
-
-```javascript
-const nestedCell = Cell.source(Cell.source(5));
-const flattenedValue = Cell.flatten(nestedCell);
-console.log(flattenedValue); // Output: 5
-
-const arrayOfCells = [Cell.source(1), Cell.source(2), Cell.source(3)];
-const flattenedArray = Cell.flattenArray(arrayOfCells);
-console.log(flattenedArray); // Output: [1, 2, 3]
-
-const objectWithCells = { a: Cell.source(1), b: Cell.source(2) };
-const flattenedObject = Cell.flattenObject(objectWithCells);
-console.log(flattenedObject); // Output: { a: 1, b: 2 }
-```
-
-### 8. Custom Equality Checks
+### 5. Custom Equality Checks
 
 For more complex objects, you can provide custom equality functions to determine when a cell's value has truly changed:
 
@@ -175,7 +107,7 @@ const userCell = Cell.source(
 );
 ```
 
-### 9. Named Effects
+### 6. Named Effects
 
 To aid in debugging, you can name your effects, making it easier to track and manage them:
 
@@ -191,7 +123,74 @@ console.log(count.isListeningTo('countLogger')); // Output: true
 count.stopListeningTo('countLogger');
 ```
 
-## Advanced Features and API Details
+## Features and API Details
+
+### Async Derived Cells
+
+While `Cell.derived` is for synchronous transformations, `Cell.derivedAsync` handles asynchronous logic like data fetching or complex computations. It behaves like its synchronous counterpart but manages the complexities of timing, errors, and cancellation.
+
+#### Key Differences from `Cell.derived`
+
+- **Computed Value**: `Cell.derived` returns a value; `Cell.derivedAsync` manages a `Promise`.
+- **Status Tracking**: Async cells provide `.pending` (loading state) and `.error` cells natively.
+- **Non-Blocking**: Updating a dependency doesn't block the UI; the cell simply enters a `pending` state while it works in the background.
+
+#### Usage
+
+```javascript
+const userId = Cell.source(1);
+
+const profile = Cell.derivedAsync(async (get, signal) => {
+  const id = get(userId); // Automatically tracks userId
+  const response = await fetch(`/api/users/${id}`, { signal });
+  return response.json();
+});
+
+// Reacting to the state
+profile.pending.listen((loading) =>
+  console.log(loading ? 'Loading...' : 'Ready')
+);
+profile.error.listen((err) => err && console.error('Fetch failed:', err));
+
+// Getting the value:
+const data = await profile.get();
+```
+
+#### Behavior
+
+- **Orchestration**: If a dependency is another async cell, calling `await get(dependency)` ensures the library waits for the parent to finish before starting the current computation.
+- **Cancellation**: If dependencies change while a computation is in-flight, the provided `signal` is aborted and the computation is restarted with fresh inputs.
+- **Consistency**: The library performs a deep equality check on results. If a parent finishes but its value hasn't changed, dependent children will not re-run.
+- **Resilience**: If a computation fails, the `error` cell is updated, but `get()` continues to provide the last successful value to keep the UI stable.
+
+#### Composition (Chaining)
+
+Multiple async cells can be chained together. The library handles the synchronization between them automatically.
+
+```javascript
+const posts = Cell.derivedAsync(async (get, signal) => {
+  // Wait for the 'profile' cell to resolve first
+  const userData = await get(profile);
+  const response = await fetch(`/api/posts?email=${userData.email}`, {
+    signal,
+  });
+  return response.json();
+});
+```
+
+#### API Summary
+
+- **`pending`**: `Cell<boolean>` - `true` during active computation.
+- **`error`**: `Cell<Error | null>` - The last error encountered.
+- **`get()`**: Returns a `Promise` that resolves to the current value once the cell (and its ancestors) are stable.
+- **`peek()`**: Same as `get()`, but does not register the cell as a dependency of the caller.
+
+#### Callback Signature
+
+The callback receives two parameters:
+
+- `get(cell)`: Reads a cell's value and tracks it as a dependency. If the target is an async cell, it returns a `Promise`.
+- `signal`: An `AbortSignal` that triggers when the computation becomes obsolete (e.g., a dependency changed).
 
 ### Cell Options
 
