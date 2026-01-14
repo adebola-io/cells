@@ -1153,10 +1153,9 @@ export class AsyncDerivedCell extends DerivedCell {
       if (!(child instanceof AsyncDerivedCell)) continue;
       if (child.#upstream.has(promise)) return;
 
-      child.#upstream.set(promise, tripwire);
       // Only direct children should be scheduled based on this cell's valueHasChanged.
       // Grandchildren will be scheduled by their direct parent when it computes.
-      promise.finally(async () => {
+      promise.then(async () => {
         child.#upstream.delete(promise);
         if (lastStablePromise === initialState) {
           return;
@@ -1166,6 +1165,7 @@ export class AsyncDerivedCell extends DerivedCell {
           if (!IS_UPDATING) triggerUpdate();
         }
       });
+      child.#upstream.set(promise, tripwire);
       tripwire.finally(() => child.#upstream.delete(promise));
       // Propagate ONLY the upstream waiting to grandchildren (not the scheduling).
       // This ensures grandchildren wait for this ancestor to complete,

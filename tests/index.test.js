@@ -22,7 +22,7 @@ describe('Cells', () => {
         a: 1,
         b: { c: 2, d: 3 },
       },
-      { deep: true }
+      { deep: true },
     );
     const callback = vi.fn();
     cell.listen(callback);
@@ -563,7 +563,7 @@ describe('Derived cells', () => {
     expect(callback).toHaveBeenCalledWith(null);
 
     const derivedUndefined = Cell.derived(() =>
-      cell.get() > 0 ? cell.get() : undefined
+      cell.get() > 0 ? cell.get() : undefined,
     );
     expect(derivedUndefined.get()).toBeUndefined();
     const callbackUndefined = vi.fn();
@@ -1203,19 +1203,19 @@ describe('Batched effects', () => {
       () => {
         order += 'C';
       },
-      { priority: 1 }
+      { priority: 1 },
     );
     cell.listen(
       () => {
         order += 'B';
       },
-      { priority: 2 }
+      { priority: 2 },
     );
     cell.listen(
       () => {
         order += 'A';
       },
-      { priority: 3 }
+      { priority: 3 },
     );
 
     Cell.batch(() => {
@@ -3215,6 +3215,22 @@ describe('Cell.derivedAsync', () => {
 
       expect(await peekPromise).toBe(50);
     });
+
+    test('Child cell promise should not release until computation is ready', async () => {
+      const a = Cell.source(1);
+      const b = Cell.derivedAsync(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return a.get() * 100;
+      });
+      const c = Cell.derivedAsync(async (get) => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return (await get(b)) * 10;
+      });
+      const cPromise = c.get();
+      a.set(2);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await cPromise).toBe(2000);
+    });
   });
 
   describe('Listeners', () => {
@@ -3407,7 +3423,7 @@ describe('Effect options', () => {
     expect(() => {
       cell.listen(callback, { name: 'test' });
     }).toThrowError(
-      'An effect with the name "test" is already listening to this cell.'
+      'An effect with the name "test" is already listening to this cell.',
     );
   });
 
@@ -3461,7 +3477,7 @@ describe('Cell options', () => {
       { a: 1, b: 2 },
       {
         equals: (a, b) => a.a === b.a && a.b === b.b,
-      }
+      },
     );
     const callback = vi.fn();
     cell.listen(callback);
