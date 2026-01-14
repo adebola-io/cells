@@ -22,7 +22,7 @@ describe('Cells', () => {
         a: 1,
         b: { c: 2, d: 3 },
       },
-      { deep: true },
+      { deep: true }
     );
     const callback = vi.fn();
     cell.listen(callback);
@@ -88,6 +88,29 @@ describe('Effects', () => {
     expect(callback2).toHaveBeenCalledTimes(2);
     expect(callback2).toHaveBeenCalledWith(3);
     unsubscribe2();
+  });
+
+  test('Multiple once:true listeners should all fire', () => {
+    const cell = Cell.source(1);
+    const values1 = [];
+    const values2 = [];
+    const values3 = [];
+
+    cell.listen((v) => values1.push(v), { once: true });
+    cell.listen((v) => values2.push(v), { once: true });
+    cell.listen((v) => values3.push(v), { once: true });
+
+    cell.set(2);
+
+    expect(values1).toEqual([2]);
+    expect(values2).toEqual([2]);
+    expect(values3).toEqual([2]);
+
+    // After once, they should not fire again
+    cell.set(3);
+    expect(values1).toEqual([2]);
+    expect(values2).toEqual([2]);
+    expect(values3).toEqual([2]);
   });
 
   test('Cell should handle unsubscribe', () => {
@@ -540,7 +563,7 @@ describe('Derived cells', () => {
     expect(callback).toHaveBeenCalledWith(null);
 
     const derivedUndefined = Cell.derived(() =>
-      cell.get() > 0 ? cell.get() : undefined,
+      cell.get() > 0 ? cell.get() : undefined
     );
     expect(derivedUndefined.get()).toBeUndefined();
     const callbackUndefined = vi.fn();
@@ -1180,19 +1203,19 @@ describe('Batched effects', () => {
       () => {
         order += 'C';
       },
-      { priority: 1 },
+      { priority: 1 }
     );
     cell.listen(
       () => {
         order += 'B';
       },
-      { priority: 2 },
+      { priority: 2 }
     );
     cell.listen(
       () => {
         order += 'A';
       },
-      { priority: 3 },
+      { priority: 3 }
     );
 
     Cell.batch(() => {
@@ -1493,31 +1516,6 @@ describe('Cell.derivedAsync', () => {
     a.set(7);
     expect(d.get()).toBe(28);
     expect(await c.get()).toBe(14);
-  });
-
-  test('derived async cells should trigger listen callbacks', async () => {
-    const a = Cell.source(10);
-    const b = Cell.source(11);
-    const c = Cell.derivedAsync(async (get) => {
-      await new Promise((resolve) => setTimeout(resolve));
-      return get(a) * get(b);
-    });
-    const d = Cell.derived(() => {
-      return a.get() + b.get();
-    });
-    expect(d.get()).toBe(21);
-    expect(await c.get()).toBe(110);
-
-    const callback = vi.fn();
-    c.listen(async (value) => {
-      callback(await value);
-    });
-
-    b.set(10);
-    expect(await c.get()).toBe(100);
-    expect(d.get()).toBe(20);
-    expect(callback).toHaveBeenCalledTimes(1);
-    expect(callback).toHaveBeenCalledWith(100);
   });
 
   test('pending state should transition correctly during async computation', async () => {
@@ -2080,18 +2078,250 @@ describe('Cell.derivedAsync', () => {
         return aValue + 1;
       });
 
+      await vi.advanceTimersByTimeAsync(40);
+      const triggered = [];
+      asyncB.listen(async (value) => {
+        triggered.push(await value);
+      });
+
       source.set(1);
+      source.set(-10);
+      source.set(88);
       source.set(2);
-      await vi.advanceTimersByTimeAsync(200);
+      await vi.advanceTimersByTimeAsync(40);
 
       expect(await asyncA.get()).toBe(20);
       expect(await asyncB.get()).toBe(21);
+      expect(triggered).toEqual([21]);
+    });
+
+    test('deep chain (A -> B -> C -> D) stays consistent', async () => {
+      const source = Cell.source(1);
+
+      const a = Cell.derivedAsync(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return get(source) * 2;
+      });
+
+      const b = Cell.derivedAsync(async (get) => {
+        const val = await get(a);
+        await new Promise((r) => setTimeout(r, 10));
+        return val + 10;
+      });
+
+      const c = Cell.derivedAsync(async (get) => {
+        const val = await get(b);
+        await new Promise((r) => setTimeout(r, 10));
+        return val * 3;
+      });
+
+      const d = Cell.derivedAsync(async (get) => {
+        const val = await get(c);
+        await new Promise((r) => setTimeout(r, 10));
+        return val - 5;
+      });
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await d.get()).toBe(31); // ((1*2)+10)*3 - 5 = 31
+
+      source.set(5);
+      await vi.advanceTimersByTimeAsync(50);
+
+      expect(await a.get()).toBe(10);
+      expect(await b.get()).toBe(20);
+      expect(await c.get()).toBe(60);
+      expect(await d.get()).toBe(55);
+    });
+
+    test('diamond dependency (A -> B, A -> C, B+C -> D) resolves correctly', async () => {
+      const source = Cell.source(2);
+
+      const a = Cell.derivedAsync(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return get(source);
+      });
+
+      const b = Cell.derivedAsync(async (get) => {
+        const val = await get(a);
+        await new Promise((r) => setTimeout(r, 15));
+        return val * 10;
+      });
+
+      const c = Cell.derivedAsync(async (get) => {
+        const val = await get(a);
+        await new Promise((r) => setTimeout(r, 5));
+        return val + 100;
+      });
+
+      const d = Cell.derivedAsync(async (get) => {
+        const bVal = await get(b);
+        const cVal = await get(c);
+        await new Promise((r) => setTimeout(r, 10));
+        return bVal + cVal;
+      });
+
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await d.get()).toBe(122);
+
+      source.set(5);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(await a.get()).toBe(5);
+      expect(await b.get()).toBe(50);
+      expect(await c.get()).toBe(105);
+      expect(await d.get()).toBe(155);
+    });
+
+    test('error in chain propagates but does not corrupt state', async () => {
+      const source = Cell.source(1);
+      const shouldError = Cell.source(false);
+
+      const a = Cell.derivedAsync(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        if (get(shouldError)) throw new Error('A failed');
+        return get(source) * 2;
+      });
+
+      const b = Cell.derivedAsync(async (get) => {
+        const val = await get(a);
+        await new Promise((r) => setTimeout(r, 10));
+        return val + 100;
+      });
+
+      await vi.advanceTimersByTimeAsync(30);
+      expect(await b.get()).toBe(102);
+      expect(b.error.get()).toBe(null);
+
+      shouldError.set(true);
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(a.error.get()).toBeInstanceOf(Error);
+      expect(await a.get()).toBe(2); // stale value preserved
+
+      shouldError.set(false);
+      source.set(10);
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(a.error.get()).toBe(null);
+      expect(await a.get()).toBe(20);
+      expect(await b.get()).toBe(120);
+    });
+
+    test('listeners across chain all fire with correct final values', async () => {
+      const source = Cell.source(1);
+      const aValues = [];
+      const bValues = [];
+
+      const a = Cell.derivedAsync(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return get(source) * 2;
+      });
+
+      const b = Cell.derivedAsync(async (get) => {
+        const val = await get(a);
+        await new Promise((r) => setTimeout(r, 10));
+        return val + 50;
+      });
+
+      await vi.advanceTimersByTimeAsync(30);
+      a.listen(async (p) => aValues.push(await p));
+      b.listen(async (p) => bValues.push(await p));
+
+      source.set(5);
+      await vi.advanceTimersByTimeAsync(30);
+
+      source.set(10);
+      await vi.advanceTimersByTimeAsync(30);
+
+      expect(aValues).toEqual([10, 20]);
+      expect(bValues).toEqual([60, 70]);
+    });
+
+    test('sync cell feeding async chain works correctly', async () => {
+      const source = Cell.source(3);
+      const syncDerived = Cell.derived(() => source.get() * 2);
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        const val = get(syncDerived);
+        await new Promise((r) => setTimeout(r, 10));
+        return val + 100;
+      });
+
+      await vi.advanceTimersByTimeAsync(10);
+      expect(await asyncCell.get()).toBe(106);
+
+      source.set(7);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(syncDerived.get()).toBe(14);
+      expect(await asyncCell.get()).toBe(114);
+    });
+
+    test('batched update through chain triggers single recomputation per cell', async () => {
+      const s1 = Cell.source(1);
+      const s2 = Cell.source(2);
+      const computeA = vi.fn(async (get) => {
+        await new Promise((r) => setTimeout(r, 10));
+        return get(s1) + get(s2);
+      });
+      const computeB = vi.fn(async (get) => {
+        const val = await get(a);
+        await new Promise((r) => setTimeout(r, 10));
+        return val * 2;
+      });
+
+      const a = Cell.derivedAsync(computeA);
+      const b = Cell.derivedAsync(computeB);
+
+      await vi.advanceTimersByTimeAsync(30);
+      expect(computeA).toHaveBeenCalledTimes(1);
+      expect(computeB).toHaveBeenCalledTimes(1);
+      expect(await b.get()).toBe(6);
+
+      Cell.batch(() => {
+        s1.set(10);
+        s2.set(20);
+      });
+
+      await vi.advanceTimersByTimeAsync(30);
+      expect(computeA).toHaveBeenCalledTimes(2);
+      expect(computeB).toHaveBeenCalledTimes(2);
+      expect(await a.get()).toBe(30);
+      expect(await b.get()).toBe(60);
     });
   });
 
   describe('Listeners', () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
+
+    test('derived async cells should trigger listen callbacks', async () => {
+      const a = Cell.source(10);
+      const b = Cell.source(11);
+      const c = Cell.derivedAsync(async (get) => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return get(a) * get(b);
+      });
+      const d = Cell.derived(() => {
+        return a.get() + b.get();
+      });
+      expect(d.get()).toBe(21);
+      await vi.advanceTimersByTimeAsync(30);
+      expect(await c.get()).toBe(110);
+
+      const callback = vi.fn();
+      c.listen(async (value) => {
+        callback(await value);
+      });
+
+      b.set(10);
+      await vi.advanceTimersByTimeAsync(10);
+
+      expect(await c.get()).toBe(100);
+      expect(d.get()).toBe(20);
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback).toHaveBeenCalledWith(100);
+    });
 
     test('listener fires on each value change', async () => {
       const source = Cell.source(1);
@@ -2251,7 +2481,7 @@ describe('Effect options', () => {
     expect(() => {
       cell.listen(callback, { name: 'test' });
     }).toThrowError(
-      'An effect with the name "test" is already listening to this cell.',
+      'An effect with the name "test" is already listening to this cell.'
     );
   });
 
@@ -2305,7 +2535,7 @@ describe('Cell options', () => {
       { a: 1, b: 2 },
       {
         equals: (a, b) => a.a === b.a && a.b === b.b,
-      },
+      }
     );
     const callback = vi.fn();
     cell.listen(callback);

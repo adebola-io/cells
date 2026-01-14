@@ -396,7 +396,7 @@ export class Cell {
   constructor() {
     if (new.target === Cell) {
       throw new Error(
-        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.',
+        'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.'
       );
     }
     /**
@@ -491,7 +491,7 @@ export class Cell {
 
     if (options?.name && this.isListeningTo(options.name)) {
       throw new Error(
-        `An effect with the name "${options.name}" is already listening to this cell.`,
+        `An effect with the name "${options.name}" is already listening to this cell.`
       );
     }
 
@@ -616,7 +616,8 @@ export class Cell {
   update() {
     // Run watchers.
     const wvalue = this.wvalue;
-    const effects = this.#effects;
+    // Make a copy to avoid issues if effects are removed during iteration (e.g., once: true)
+    const effects = [...this.#effects];
 
     let hasUndefinedEffect = false;
     for (const { callback: watcher } of effects) {
@@ -639,7 +640,7 @@ export class Cell {
     }
     if (hasUndefinedEffect) {
       this.#effects = this.#effects.filter(
-        (effect) => effect.callback !== undefined,
+        (effect) => effect.callback !== undefined
       );
     }
   }
@@ -928,7 +929,7 @@ export class Cell {
         const currentController = controller;
         try {
           const result = await getter.bind(currentController)(
-            /** @type {X} */ (newInput ?? initialInput),
+            /** @type {X} */ (newInput ?? initialInput)
           );
           if (currentController?.signal.aborted) return;
           data.set(result);
@@ -1274,7 +1275,13 @@ export class AsyncDerivedCell extends DerivedCell {
       const tripwire = new Promise((resolve) => {
         resolveCanceller = resolve;
       });
-      this.#notify(current, tripwire, valueHasChanged);
+      this.#notify(
+        current,
+        tripwire,
+        valueHasChanged,
+        lastStablePromise,
+        initialState
+      );
       this.#abandonPrevious?.();
       this.#abandonPrevious = resolveCanceller;
 
@@ -1300,8 +1307,10 @@ export class AsyncDerivedCell extends DerivedCell {
    * @param {Promise<any>} promise
    * @param {Promise<void>} tripwire
    * @param {Promise<boolean>} valueHasChanged
+   * @param {Promise<any>} lastStablePromise
+   * @param {Promise<any>} initialState
    */
-  #notify(promise, tripwire, valueHasChanged) {
+  #notify(promise, tripwire, valueHasChanged, lastStablePromise, initialState) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
       if (child.#upstream.has(promise)) return;
@@ -1309,26 +1318,36 @@ export class AsyncDerivedCell extends DerivedCell {
       child.#upstream.set(promise, tripwire);
       promise.finally(async () => {
         child.#upstream.delete(promise);
+        if (lastStablePromise === initialState) {
+          return;
+        }
         if (!child[IsScheduled] && (await valueHasChanged)) {
           UPDATE_BUFFER.push(child);
           if (!IS_UPDATING) triggerUpdate();
         }
       });
       tripwire.finally(() => child.#upstream.delete(promise));
-      child.#notify(promise, tripwire, valueHasChanged);
+      child.#notify(
+        promise,
+        tripwire,
+        valueHasChanged,
+        lastStablePromise,
+        initialState
+      );
     }
   }
 
   async get() {
     super.get(); // Forces a dependency registration in sync time.
     while (this.#upstream.size) {
-      const promises = this.#upstream.entries().map(([value, discarded]) => {
+      const entries = [...this.#upstream.entries()];
+      const promises = entries.map(([value, discarded]) => {
         return Promise.race([value, discarded]);
       });
       await Promise.allSettled(promises);
     }
     return new Promise((resolve) => {
-      if (this.pending.get()) {
+      if (this.pending.peek()) {
         this.pending.listen(() => resolve(this.wvalue), { once: true });
       } else {
         resolve(this.wvalue);
