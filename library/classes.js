@@ -103,6 +103,7 @@ let CurrentTrackingContext = GlobalTrackingContext;
 const Depth = Symbol();
 const IsScheduled = Symbol();
 const Deferred = Symbol();
+const DisposeAsyncCell = Symbol();
 
 /**
  * Tracks cells that need to be updated during the update cycle.
@@ -284,6 +285,8 @@ export class LocalContext {
       for (const source of sources) {
         source.derivations.delete(derivation);
       }
+      if (derivation instanceof AsyncDerivedCell)
+        derivation[DisposeAsyncCell]();
     }
 
     for (const [cell, effects] of this.effects) {
@@ -1023,10 +1026,12 @@ export class SourceCell extends Cell {
  * ```
  */
 export class AsyncDerivedCell extends DerivedCell {
-  /** @type {Map<Promise<any>, Promise<void>>} */
-  #upstream = new Map();
+  /** @type {Set<Promise<any>>} */
+  #upstream = new Set();
   /** @type {undefined | (() => void)} */
-  #abandonPrevious;
+  #abandonLastComputation;
+  /** @type {AbortController} */ //@ts-expect-error: not definitively assigned.
+  #controller;
 
   /**
    * A cell that indicates whether the async computation is currently running.
@@ -1064,9 +1069,6 @@ export class AsyncDerivedCell extends DerivedCell {
       return value;
     };
 
-    /** @type {AbortController | undefined} */
-    let controller;
-
     this.computedFn = async () => {
       derivedCtx = [this, this[Depth]];
 
@@ -1075,8 +1077,8 @@ export class AsyncDerivedCell extends DerivedCell {
         this.error.set(null);
       });
 
-      if (controller) controller.abort();
-      controller = new AbortController();
+      this.#controller?.abort();
+      this.#controller = new AbortController();
 
       /** @type {null | ((value: boolean) => void)} */
       let resolveChangedState = null;
@@ -1084,8 +1086,23 @@ export class AsyncDerivedCell extends DerivedCell {
       const valueHasChanged = new Promise((resolve) => {
         resolveChangedState = resolve;
       });
+      // if this cell discards this promise and starts another,
+      // we do not want to its children to be stuck waiting for the old.
+      // We are not using signal.addEventListener('abort') here because
+      // the controller aborts too early (before the next promise even starts),
+      // and we want the next promise to already be notified to the children,
+      // so they don't resolve prematurely.
+      /** @type {undefined | (() => void)} */
+      let abandonComputation;
+      /** @type {Promise<T | null>} */
+      const tripwire = new Promise((resolve) => {
+        abandonComputation = () => resolve(lastStablePromise);
+      });
 
-      const current = Promise.resolve(fn(get, controller.signal))
+      const current = Promise.race([
+        tripwire,
+        new Promise((resolve) => resolve(fn(get, this.#controller.signal))),
+      ])
         .catch((error) => {
           if (this.wvalue === current) {
             Cell.batch(() => {
@@ -1103,25 +1120,10 @@ export class AsyncDerivedCell extends DerivedCell {
           return value;
         });
       this.wvalue = current;
-      // if this cell discards this promise and starts another,
-      // we do not want to its children to be stuck waiting for the old.
-      // We are not using signal.addEventListener('abort') here because
-      // the controller aborts too early (before the next promise even starts),
-      // and we want the next promise to already be notified to the children,
-      // so they don't resolve prematurely.
-      let resolveCanceller;
-      const tripwire = new Promise((resolve) => {
-        resolveCanceller = resolve;
-      });
-      this.#notify(
-        current,
-        tripwire,
-        valueHasChanged,
-        lastStablePromise,
-        initialState,
-      );
-      this.#abandonPrevious?.();
-      this.#abandonPrevious = resolveCanceller;
+
+      this.#notify(current, valueHasChanged, lastStablePromise, initialState);
+      this.#abandonLastComputation?.();
+      this.#abandonLastComputation = abandonComputation;
 
       current.finally(async () => {
         if (this.wvalue !== current) return;
@@ -1143,12 +1145,11 @@ export class AsyncDerivedCell extends DerivedCell {
 
   /**
    * @param {Promise<any>} promise
-   * @param {Promise<void>} tripwire
    * @param {Promise<boolean>} valueHasChanged
    * @param {Promise<any>} lastStablePromise
    * @param {Promise<any>} initialState
    */
-  #notify(promise, tripwire, valueHasChanged, lastStablePromise, initialState) {
+  #notify(promise, valueHasChanged, lastStablePromise, initialState) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
       if (child.#upstream.has(promise)) return;
@@ -1165,12 +1166,11 @@ export class AsyncDerivedCell extends DerivedCell {
           if (!IS_UPDATING) triggerUpdate();
         }
       });
-      child.#upstream.set(promise, tripwire);
-      tripwire.finally(() => child.#upstream.delete(promise));
+      child.#upstream.add(promise);
       // Propagate ONLY the upstream waiting to grandchildren (not the scheduling).
       // This ensures grandchildren wait for this ancestor to complete,
       // but they'll be scheduled by their direct parent's #notify, not ours.
-      child.#notifyUpstreamOnly(promise, tripwire);
+      child.#notifyUpstreamOnly(promise);
     }
   }
 
@@ -1178,43 +1178,33 @@ export class AsyncDerivedCell extends DerivedCell {
    * Propagates upstream tracking to grandchildren without scheduling them.
    * This ensures they wait for the ancestor to complete when calling .get().
    * @param {Promise<any>} promise
-   * @param {Promise<void>} tripwire
    */
-  #notifyUpstreamOnly(promise, tripwire) {
+  #notifyUpstreamOnly(promise) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
       if (child.#upstream.has(promise)) return;
 
-      child.#upstream.set(promise, tripwire);
-      tripwire.finally(() => child.#upstream.delete(promise));
+      child.#upstream.add(promise);
       promise.finally(() => child.#upstream.delete(promise));
       // Continue propagating upstream tracking down the chain
-      child.#notifyUpstreamOnly(promise, tripwire);
-    }
-  }
-
-  async #sync() {
-    while (this.#upstream.size) {
-      const entries = [...this.#upstream.entries()];
-      const promises = entries.map(([value, discarded]) => {
-        return Promise.race([value, discarded]);
-      });
-      await Promise.allSettled(promises);
+      child.#notifyUpstreamOnly(promise);
     }
   }
 
   async get() {
     super.get(); // Forces a dependency registration in sync time.
-    await this.#sync();
+    while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
     return new Promise((resolve) => {
       if (this.pending.peek()) {
         this.pending.listen(() => resolve(this.wvalue), { once: true });
-      } else {
-        resolve(this.wvalue);
-      }
+      } else resolve(this.wvalue);
     });
   }
 
+  [DisposeAsyncCell]() {
+    this.#controller?.abort();
+    this.#abandonLastComputation?.();
+  }
   /**
    * Returns the current value of the async cell without registering dependencies.
    * Like get(), this waits for upstream promises and pending state to resolve,
@@ -1222,7 +1212,7 @@ export class AsyncDerivedCell extends DerivedCell {
    * @returns {Promise<T | null>} A promise that resolves to the current value.
    */
   async peek() {
-    await this.#sync();
+    while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
     return new Promise((resolve) => {
       if (this.pending.peek()) {
         this.pending.listen(() => resolve(this.wvalue), { once: true });

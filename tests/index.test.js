@@ -3358,6 +3358,40 @@ describe('Cell.derivedAsync', () => {
       expect(await asyncCell.get()).toBe(30);
     });
   });
+
+  describe('Async Deadlock on Dispose', () => {
+    test('Should release downstream cells immediately upon disposal', async () => {
+      const context = Cell.context();
+      let downstream;
+      let asyncCell;
+      Cell.runWithContext(context, () => {
+        asyncCell = Cell.derivedAsync(async () => {
+          return new Promise(() => {});
+        });
+
+        downstream = Cell.derivedAsync(async (get) => {
+          return get(asyncCell); // Waits for upstream
+        });
+
+        // Initially, downstream should be pending because upstream is pending
+        expect(downstream.pending.get()).toBe(true);
+      });
+
+      context.destroy();
+
+      await new Promise((resolve) => setTimeout(resolve));
+      expect(asyncCell.pending.get()).toBe(false);
+      expect(downstream.pending.get()).toBe(false);
+
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Deadlock detected')), 100),
+      );
+
+      await expect(
+        Promise.race([downstream.get(), timeout]),
+      ).resolves.not.toThrow();
+    });
+  });
 });
 
 describe('Effect options', () => {
