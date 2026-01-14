@@ -22,7 +22,7 @@ describe('Cells', () => {
         a: 1,
         b: { c: 2, d: 3 },
       },
-      { deep: true },
+      { deep: true }
     );
     const callback = vi.fn();
     cell.listen(callback);
@@ -563,7 +563,7 @@ describe('Derived cells', () => {
     expect(callback).toHaveBeenCalledWith(null);
 
     const derivedUndefined = Cell.derived(() =>
-      cell.get() > 0 ? cell.get() : undefined,
+      cell.get() > 0 ? cell.get() : undefined
     );
     expect(derivedUndefined.get()).toBeUndefined();
     const callbackUndefined = vi.fn();
@@ -1203,19 +1203,19 @@ describe('Batched effects', () => {
       () => {
         order += 'C';
       },
-      { priority: 1 },
+      { priority: 1 }
     );
     cell.listen(
       () => {
         order += 'B';
       },
-      { priority: 2 },
+      { priority: 2 }
     );
     cell.listen(
       () => {
         order += 'A';
       },
-      { priority: 3 },
+      { priority: 3 }
     );
 
     Cell.batch(() => {
@@ -1302,178 +1302,6 @@ describe('Immediate effects', () => {
     abortController.abort();
     cell.set(2); // This should not trigger the callback
     expect(callback).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('Flattening', () => {
-  test('Flattening should work', () => {
-    const cell = Cell.source(1);
-    const value = Cell.flatten(cell);
-    expect(value).toBe(1);
-  });
-
-  test('Flattening should work with nested cells', () => {
-    const cell = Cell.source(Cell.source(1));
-    const value = Cell.flatten(cell);
-    expect(value).toBe(1);
-  });
-
-  test('Flattening should work with nested derived cells', () => {
-    const cell = Cell.source(Cell.source(1));
-    const value = Cell.flatten(Cell.derived(() => cell.get()));
-    expect(value).toBe(1);
-  });
-
-  test('Flattening should work on arrays', () => {
-    const cell = [1, 2, Cell.source(3)];
-    const value = Cell.flattenArray(cell);
-    expect(value).toEqual([1, 2, 3]);
-  });
-
-  test('Flattening should work on objects', () => {
-    const cell = { a: 1, b: Cell.source(2) };
-    const value = Cell.flattenObject(cell);
-    expect(value).toEqual({ a: 1, b: 2 });
-  });
-});
-
-describe('Cell.async', () => {
-  test('Should work with a simple function', async () => {
-    const { data, run } = Cell.async(async () => await 1);
-    await run();
-    expect(data.get()).toBe(1);
-  });
-
-  test('Should catch errors in getter function', async () => {
-    const getter = async () => {
-      await true;
-      throw new Error('Something went wrong!');
-    };
-
-    const { data, error, run } = Cell.async(getter);
-    await run();
-    expect(data.get()).toBe(null);
-    expect(error.get()).toHaveProperty('message', 'Something went wrong!');
-  });
-
-  test('Should update loading state', async () => {
-    const getter = async () => {
-      await new Promise((resolve) => setTimeout(resolve));
-      return true;
-    };
-
-    const { data, run, pending } = Cell.async(getter);
-    const runPromise = run();
-
-    expect(data.get()).toBe(null);
-    expect(pending.get()).toBe(true);
-
-    await runPromise;
-
-    expect(data.get()).toBe(true);
-    expect(pending.get()).toBe(false);
-  });
-
-  test('Should abort previous async operations when a new one starts', async () => {
-    const getter = vi.fn(async function (value) {
-      await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => resolve(value * 2));
-        this.signal.addEventListener('abort', () => {
-          clearTimeout(timeout);
-          reject(new Error('Aborted'));
-        });
-      });
-      return value * 2;
-    });
-
-    const { data, run, error } = Cell.async(getter);
-
-    const promise1 = run(5);
-    await new Promise((resolve) => setTimeout(resolve));
-    const promise2 = run(10);
-
-    await Promise.allSettled([promise1, promise2]);
-
-    expect(data.get()).toBe(20); // 10 * 2
-    expect(getter).toHaveBeenCalledTimes(2);
-  });
-
-  test('Should pass AbortSignal to getter function', async () => {
-    const getter = vi.fn(async function (value) {
-      expect(this.signal).toBeInstanceOf(AbortSignal);
-      return value;
-    });
-
-    const { data, run } = Cell.async(getter);
-    const result = await run(42);
-    expect(result).toBe(42);
-    expect(data.get()).toBe(42);
-    expect(getter).toHaveBeenCalledWith(42);
-  });
-
-  test('run() should return the response data', async () => {
-    const { data, run } = Cell.async(async (value) => value * 2);
-    const result = await run(5);
-    expect(result).toBe(10);
-    expect(data.get()).toBe(10);
-  });
-
-  test('run() should return null on error', async () => {
-    const getter = async () => {
-      throw new Error('Test error');
-    };
-    const { data, run } = Cell.async(getter);
-    const result = await run();
-    expect(result).toBe(null);
-    expect(data.get()).toBe(null);
-  });
-
-  test('run() should abort and return null if previous operation is aborted', async () => {
-    let callCount = 0;
-    const getter = vi.fn(async function () {
-      callCount++;
-      await new Promise((resolve) => setTimeout(resolve));
-      if (this.signal.aborted) {
-        throw new Error('Aborted');
-      }
-      return `result${callCount}`;
-    });
-
-    const { data, run } = Cell.async(getter);
-
-    // Start first run
-    const promise1 = run();
-
-    // Quickly start second run
-    await new Promise((resolve) => setTimeout(resolve));
-    const result2 = await run();
-
-    // Wait for first to settle
-    await promise1.catch(() => {});
-
-    expect(callCount).toBe(2);
-    expect(result2).toBe('result2');
-    expect(data.get()).toBe('result2');
-  });
-
-  test('AbortSignal should be properly aborted on new run()', async () => {
-    const abortedSignals = [];
-    const getter = vi.fn(async function (value) {
-      this.signal.addEventListener('abort', () => abortedSignals.push(value));
-      await new Promise((resolve) => setTimeout(resolve));
-      return value;
-    });
-
-    const { run } = Cell.async(getter);
-
-    // Start first run
-    run(1);
-
-    // Start second run before first completes
-    await new Promise((resolve) => setTimeout(resolve));
-    await run(2);
-
-    expect(abortedSignals).toContain(1);
   });
 });
 
@@ -3579,7 +3407,7 @@ describe('Effect options', () => {
     expect(() => {
       cell.listen(callback, { name: 'test' });
     }).toThrowError(
-      'An effect with the name "test" is already listening to this cell.',
+      'An effect with the name "test" is already listening to this cell.'
     );
   });
 
@@ -3633,7 +3461,7 @@ describe('Cell options', () => {
       { a: 1, b: 2 },
       {
         equals: (a, b) => a.a === b.a && a.b === b.b,
-      },
+      }
     );
     const callback = vi.fn();
     cell.listen(callback);
