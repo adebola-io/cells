@@ -1191,6 +1191,10 @@ export class AsyncDerivedCell extends DerivedCell {
     }
   }
 
+  /**
+   * Returns the current value of the async cell.
+   * @returns {Promise<T | null>}
+   */
   async get() {
     super.get(); // Forces a dependency registration in sync time.
     while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
