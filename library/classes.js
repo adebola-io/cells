@@ -1225,6 +1225,15 @@ export class AsyncDerivedCell extends DerivedCell {
       }
     });
   }
+
+  /**
+   * Revalidates the async cell by recomputing its value.
+   * This will abort any in-flight computation and start a new one.
+   * @returns {void}
+   */
+  revalidate() {
+    this.computedFn();
+  }
 }
 
 /**

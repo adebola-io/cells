@@ -184,6 +184,7 @@ const posts = Cell.derivedAsync(async (get, signal) => {
 - **`error`**: `Cell<Error | null>` - The last error encountered.
 - **`get()`**: Returns a `Promise` that resolves to the current value once the cell (and its ancestors) are stable.
 - **`peek()`**: Same as `get()`, but does not register the cell as a dependency of the caller.
+- **`revalidate()`**: Manually triggers a recomputation of the async cell, aborting any in-flight computation.
 
 #### Callback Signature
 
