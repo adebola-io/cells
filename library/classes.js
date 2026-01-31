@@ -170,7 +170,7 @@ function triggerUpdate() {
           cell[IsScheduled] = false;
           const computedDependents = cell.derivations;
           for (const computedCell of computedDependents) {
-            if (cell instanceof AsyncDerivedCell) continue;
+            if (computedCell instanceof AsyncDerivedCell) continue;
             if (computedCell[IsScheduled]) continue;
 
             UPDATE_BUFFER.push(computedCell);
@@ -1207,6 +1207,8 @@ export class AsyncDerivedCell extends DerivedCell {
           if (currentRunId === runId) {
             this.pending.set(false);
             resolveChangedState?.(!deepEqual(await lastStablePromise, value));
+          } else {
+            resolveChangedState?.(false);
           }
           return value;
         });
@@ -1243,7 +1245,7 @@ export class AsyncDerivedCell extends DerivedCell {
   #notify(promise, valueHasChanged, lastStablePromise, initialState) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
-      if (child.#upstream.has(promise)) return;
+      if (child.#upstream.has(promise)) continue;
 
       // Only direct children should be scheduled based on this cell's valueHasChanged.
       // Grandchildren will be scheduled by their direct parent when it computes.
@@ -1279,7 +1281,7 @@ export class AsyncDerivedCell extends DerivedCell {
   #notifyUpstreamOnly(promise) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
-      if (child.#upstream.has(promise)) return;
+      if (child.#upstream.has(promise)) continue;
 
       child.#upstream.add(promise);
       promise.finally(() => child.#upstream.delete(promise));
