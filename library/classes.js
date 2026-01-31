@@ -4,6 +4,20 @@
  */
 
 /**
+ * @template {Record<string, Cell<any>>} CellData
+ * @typedef Composite
+ * An object of barrier-synchronized async derived cells. Each member waits for
+ * *all* inputs to settle before yielding.
+ * @property {{
+ *  [key in keyof CellData]:
+ *    CellData[key] extends AsyncDerivedCell<infer T>
+ *    ? AsyncDerivedCell<T> :
+ *    CellData[key] extends Cell<infer X> ? AsyncDerivedCell<X> : never }} values
+ * @property {Cell<boolean>} pending
+ * @property {Cell<Error | null>} error
+ */
+
+/**
  * @typedef {object} EffectOptions
  * @property {boolean} [once]
  * Whether the effect should be removed after the first run.
@@ -709,6 +723,72 @@ export class Cell {
    */
   static derivedAsync = (callback) => new AsyncDerivedCell(callback);
 
+  /**
+   * Joins multiple cells into a single “all-or-nothing” async barrier.
+   *
+   * Each returned `values[key]` only produces a new value after **every** input cell
+   * has settled for the current round, so reads like:
+   *
+   * ```js
+   * const u = await group.values.user.get();
+   * const n = await group.values.notifications.get();
+   * ```
+   *
+   * won’t observe partial updates.
+   *
+   * @template {Record<string, Cell<any>>} CellData
+   * @param {CellData} input Cells to join (may include async and sync cells).
+   * @returns {Composite<CellData>}
+   *
+   * @example
+   * const user = Cell.derivedAsync(async (get) => fetchUser(get(id)));
+   * const notifications = Cell.derivedAsync(async (get) => fetchNotifs(get(id)));
+   *
+   * const group = Cell.createComposite({ user, notifications });
+   *
+   * group.pending.listen(showSpinner);
+   * group.error.listen(showError);
+   *
+   * const u = await group.values.user.get();
+   * const n = await group.values.notifications.get();
+   */
+  static createComposite = (input) => {
+    const output = /** @type {Composite<CellData>['values']} */ ({});
+    const error = Cell.derived(() => {
+      return (
+        Object.values(input)
+          .map((cell) =>
+            cell instanceof AsyncDerivedCell ? cell.error.get() : null,
+          )
+          .find(Boolean) || null
+      );
+    });
+    const pending = Cell.derived(() => {
+      return Object.values(input)
+        .map((cell) =>
+          cell instanceof AsyncDerivedCell ? cell.pending.get() : false,
+        )
+        .some(Boolean);
+    });
+    const barrier = Cell.derivedAsync((get) => {
+      return Promise.all(Object.values(input).map(get));
+    });
+
+    const values = Object.keys(input).reduce((output, key) => {
+      const value = Cell.derivedAsync(async (get) => {
+        await get(barrier);
+        const err = error.peek();
+        if (err) throw err;
+        const nextValue = await get(input[key]);
+        await get(barrier);
+        return nextValue;
+      });
+      Reflect.set(output, key, value);
+      return output;
+    }, output);
+
+    return { values, pending, error };
+  };
   /**
    * Executes a function within a specific LocalContext.
    * Any effects (`.listen`) or derived cells (`Cell.derived`) created synchronously
