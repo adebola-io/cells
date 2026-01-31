@@ -724,9 +724,9 @@ export class Cell {
   static derivedAsync = (callback) => new AsyncDerivedCell(callback);
 
   /**
-   * Joins multiple cells into a single “all-or-nothing” async barrier.
+   * Joins multiple cells into a single “all-or-nothing” async unit.
    *
-   * Each returned `values[key]` only produces a new value after **every** input cell
+   * Each returned property only produces a new value after **every** input cell
    * has settled for the current round, so reads like:
    *
    * ```js

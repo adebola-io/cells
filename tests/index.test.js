@@ -3870,3 +3870,236 @@ describe('Tracking contexts', () => {
     });
   });
 });
+
+describe('Cell.createComposite', () => {
+  test('combines sync cells into a composite', async () => {
+    const a = Cell.source(1);
+    const b = Cell.source(2);
+    const composite = Cell.createComposite({ a, b });
+
+    expect(composite.pending.get()).toBe(false);
+    expect(composite.error.get()).toBeNull();
+
+    const aValue = await composite.values.a.get();
+    const bValue = await composite.values.b.get();
+
+    expect(aValue).toBe(1);
+    expect(bValue).toBe(2);
+  });
+
+  test('combines async cells with pending tracking', async () => {
+    const a = Cell.derivedAsync(async () => {
+      await delay(10);
+      return 'a-value';
+    });
+    const b = Cell.derivedAsync(async () => {
+      await delay(20);
+      return 'b-value';
+    });
+
+    const composite = Cell.createComposite({ a, b });
+
+    expect(composite.pending.get()).toBe(true);
+    expect(composite.error.get()).toBeNull();
+
+    const [aValue, bValue] = await Promise.all([
+      composite.values.a.get(),
+      composite.values.b.get(),
+    ]);
+
+    expect(aValue).toBe('a-value');
+    expect(bValue).toBe('b-value');
+    expect(composite.pending.get()).toBe(false);
+  });
+
+  test('error propagates to all composite values', async () => {
+    const error = new Error('test error');
+    const a = Cell.derivedAsync(async () => {
+      await delay(10);
+      return 'a-value';
+    });
+    const b = Cell.derivedAsync(async () => {
+      await delay(5);
+      throw error;
+    });
+
+    const composite = Cell.createComposite({ a, b });
+
+    await delay(30);
+
+    // The composite error cell should reflect the first error from inputs
+    expect(composite.error.get()).toEqual(error);
+
+    // The composite value cells should also have errors set
+    expect(composite.values.a.error.get()).toEqual(error);
+    expect(composite.values.b.error.get()).toEqual(error);
+  });
+
+  test('values synchronize via barrier - all resolve together', async () => {
+    const a = Cell.derivedAsync(async () => {
+      await delay(50);
+      return 'slow';
+    });
+    const b = Cell.derivedAsync(async () => {
+      await delay(10);
+      return 'fast';
+    });
+
+    const composite = Cell.createComposite({ a, b });
+
+    const aPromise = composite.values.a.get();
+    const bPromise = composite.values.b.get();
+
+    const [aValue, bValue] = await Promise.all([aPromise, bPromise]);
+
+    expect(aValue).toBe('slow');
+    expect(bValue).toBe('fast');
+  });
+
+  test('mixed sync and async cells work together', async () => {
+    const syncCell = Cell.source('sync-value');
+    const asyncCell = Cell.derivedAsync(async () => {
+      await delay(10);
+      return 'async-value';
+    });
+
+    const composite = Cell.createComposite({
+      sync: syncCell,
+      async: asyncCell,
+    });
+
+    expect(composite.pending.get()).toBe(true);
+
+    const [syncValue, asyncValue] = await Promise.all([
+      composite.values.sync.get(),
+      composite.values.async.get(),
+    ]);
+
+    expect(syncValue).toBe('sync-value');
+    expect(asyncValue).toBe('async-value');
+    expect(composite.pending.get()).toBe(false);
+  });
+
+  test('composite recovers after error and retry', async () => {
+    let shouldFail = true;
+    const source = Cell.source(1);
+
+    const asyncCell = Cell.derivedAsync(async (get) => {
+      const val = get(source);
+      await delay(5);
+      if (shouldFail) throw new Error('retry me');
+      return val * 10;
+    });
+
+    const composite = Cell.createComposite({ value: asyncCell });
+
+    await delay(20);
+    expect(composite.error.get()?.message).toBe('retry me');
+
+    shouldFail = false;
+    source.set(2);
+
+    await delay(20);
+    expect(composite.error.get()).toBeNull();
+
+    const value = await composite.values.value.get();
+    expect(value).toBe(20);
+  });
+
+  test('pending state updates correctly', async () => {
+    const source = Cell.source(1);
+    const pendingValues = [];
+
+    const asyncCell = Cell.derivedAsync(async (get) => {
+      const val = get(source);
+      await delay(10);
+      return val;
+    });
+
+    const composite = Cell.createComposite({ value: asyncCell });
+
+    // Initial state
+    expect(composite.pending.get()).toBe(true);
+
+    composite.pending.listen((val) => pendingValues.push(val));
+
+    await delay(20);
+    expect(composite.pending.get()).toBe(false);
+    expect(pendingValues).toContain(false);
+
+    source.set(2);
+    expect(composite.pending.get()).toBe(true);
+    expect(pendingValues).toContain(true);
+
+    await delay(20);
+    expect(composite.pending.get()).toBe(false);
+  });
+
+  test('barrier ensures no partial reads during updates', async () => {
+    const source = Cell.source(1);
+
+    const a = Cell.derivedAsync(async (get) => {
+      const val = get(source);
+      await delay(10);
+      return `a-${val}`;
+    });
+    const b = Cell.derivedAsync(async (get) => {
+      const val = get(source);
+      await delay(20);
+      return `b-${val}`;
+    });
+
+    const composite = Cell.createComposite({ a, b });
+
+    await delay(30);
+
+    const valueA1 = await composite.values.a.get();
+    const valueB1 = await composite.values.b.get();
+    expect(valueA1).toBe('a-1');
+    expect(valueB1).toBe('b-1');
+
+    source.set(2);
+
+    const valueA2 = await composite.values.a.get();
+    const valueB2 = await composite.values.b.get();
+    expect(valueA2).toBe('a-2');
+    expect(valueB2).toBe('b-2');
+  });
+
+  test('only tracks pending and error from AsyncDerivedCells', () => {
+    const syncCell = Cell.source('value');
+    const asyncCell = Cell.derivedAsync(async () => 'async');
+
+    const composite = Cell.createComposite({
+      sync: syncCell,
+      async: asyncCell,
+    });
+
+    expect(composite.pending.get()).toBe(true);
+    expect(composite.error.get()).toBeNull();
+  });
+
+  test('composite with single cell works correctly', async () => {
+    const asyncCell = Cell.derivedAsync(async () => {
+      await delay(10);
+      return 'single';
+    });
+
+    const composite = Cell.createComposite({ value: asyncCell });
+
+    expect(composite.pending.get()).toBe(true);
+
+    const value = await composite.values.value.get();
+    expect(value).toBe('single');
+    expect(composite.pending.get()).toBe(false);
+    expect(composite.error.get()).toBeNull();
+  });
+
+  test('empty composite is valid', () => {
+    const composite = Cell.createComposite({});
+
+    expect(composite.pending.get()).toBe(false);
+    expect(composite.error.get()).toBeNull();
+    expect(Object.keys(composite.values)).toHaveLength(0);
+  });
+});
