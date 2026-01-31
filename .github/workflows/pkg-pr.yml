@@ -16,6 +16,6 @@ jobs:
           bun-version: latest
 
       - run: bun install
-      - run: bun test
+      - run: bun run test --run
       - run: bun run build
       - run: bun run prepublish

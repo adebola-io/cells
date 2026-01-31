@@ -1,30 +1,20 @@
 /**
- * @template Input, Output, Getter
- * @typedef {Object} AsyncRequestAtoms
- *
- * @property {SourceCell<boolean>} pending
- * Represents the loading state of an asynchronous request.
- *
- * @property {SourceCell<Output|null>} data
- * Represents the data returned by the asynchronous request.
- *
- * @property {SourceCell<Error | null>} error
- * Represents the errors returned by the asynchronous request, if any.
- *
- * @property {Getter extends (...args: infer P) => any ? P['length'] extends 0 ? SimplePromiseFn<Output>: PromiseFnWithArgs<P, Output> : SimplePromiseFn<Output>} run
- * Triggers the asynchronous request.
- *
- * @property {(newInput?: Input, changeLoadingState?: boolean) => Promise<void>} reload Triggers the asynchronous request again with an optional new input and optionally changes the loading state.
+ * @template T
+ * @typedef {(track: <T>(cell: Cell<T>) => T) => T} ComputedFn
  */
 
 /**
- * @template Output
- * @typedef {() => Promise<Output | null>} SimplePromiseFn
- */
-
-/**
- * @template {Array<any>} Args, Output
- * @typedef {(...args: Args) => Promise<Output | null>} PromiseFnWithArgs
+ * @template {Record<string, Cell<any>>} CellData
+ * @typedef Composite
+ * An object of barrier-synchronized async derived cells. Each member waits for
+ * *all* inputs to settle before yielding.
+ * @property {{
+ *  [key in keyof CellData]:
+ *    CellData[key] extends AsyncDerivedCell<infer T>
+ *    ? AsyncDerivedCell<T> :
+ *    CellData[key] extends Cell<infer X> ? AsyncDerivedCell<X> : never }} values
+ * @property {Cell<boolean>} pending
+ * @property {Cell<Error | null>} error
  */
 
 /**
@@ -127,6 +117,7 @@ let CurrentTrackingContext = GlobalTrackingContext;
 const Depth = Symbol();
 const IsScheduled = Symbol();
 const Deferred = Symbol();
+const DisposeAsyncCell = Symbol();
 
 /**
  * Tracks cells that need to be updated during the update cycle.
@@ -174,6 +165,19 @@ function triggerUpdate() {
         cell[Deferred] = false;
         if (depth > currentDepth) currentDepth = depth;
         const newValue = cell.computedFn();
+        if (cell instanceof AsyncDerivedCell) {
+          // async cells will handle propagation manually.
+          cell[IsScheduled] = false;
+          const computedDependents = cell.derivations;
+          for (const computedCell of computedDependents) {
+            if (computedCell instanceof AsyncDerivedCell) continue;
+            if (computedCell[IsScheduled]) continue;
+
+            UPDATE_BUFFER.push(computedCell);
+            computedCell[IsScheduled] = true;
+          }
+          continue;
+        }
         // @ts-expect-error: wvalue is protected.
         if (deepEqual(cell.wvalue, newValue)) {
           cell[IsScheduled] = false;
@@ -295,6 +299,8 @@ export class LocalContext {
       for (const source of sources) {
         source.derivations.delete(derivation);
       }
+      if (derivation instanceof AsyncDerivedCell)
+        derivation[DisposeAsyncCell]();
     }
 
     for (const [cell, effects] of this.effects) {
@@ -394,14 +400,6 @@ export class Cell {
    * @protected @type T
    */
   wvalue = /** @type {T} */ (null);
-
-  /**
-   * @protected
-   * @param {T} value
-   */
-  setValue(value) {
-    this.wvalue = value;
-  }
 
   /**
    * Overrides `Object.prototype.valueOf()` to return the value stored in the Cell.
@@ -606,7 +604,8 @@ export class Cell {
   update() {
     // Run watchers.
     const wvalue = this.wvalue;
-    const effects = this.#effects;
+    // Make a copy to avoid issues if effects are removed during iteration (e.g., once: true)
+    const effects = [...this.#effects];
 
     let hasUndefinedEffect = false;
     for (const { callback: watcher } of effects) {
@@ -691,6 +690,106 @@ export class Cell {
   static context = () => new LocalContext();
 
   /**
+   * Creates a new AsyncDerivedCell that computes its value asynchronously.
+   * The cell automatically re-computes when any of its dependencies change,
+   * with built-in support for cancellation, loading state, and error handling.
+   *
+   * @template U
+   * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => Promise<U>} callback - An async function that computes the derived value.
+   *   - `get`: A function to read cell values while tracking them as dependencies.
+   *   - `signal`: An AbortSignal that is aborted when a new computation starts,
+   *     useful for cancelling in-flight requests.
+   * @returns {AsyncDerivedCell<U>} A new AsyncDerivedCell instance.
+   *
+   * @example
+   * ```javascript
+   * import { Cell } from '@adbl/cells';
+   *
+   * const userId = Cell.source(1);
+   *
+   * const userData = Cell.derivedAsync(async (get, signal) => {
+   *   const id = get(userId); // Tracks userId as a dependency
+   *   const response = await fetch(`/api/users/${id}`, { signal });
+   *   return response.json();
+   * });
+   *
+   * // Access loading and error states
+   * userData.pending.listen((loading) => console.log('Loading:', loading));
+   * userData.error.listen((err) => err && console.error(err));
+   *
+   * // Get the async value
+   * const data = await userData.get();
+   * ```
+   */
+  static derivedAsync = (callback) => new AsyncDerivedCell(callback);
+
+  /**
+   * Joins multiple cells into a single “all-or-nothing” async unit.
+   *
+   * Each returned property only produces a new value after **every** input cell
+   * has settled for the current round, so reads like:
+   *
+   * ```js
+   * const u = await group.values.user.get();
+   * const n = await group.values.notifications.get();
+   * ```
+   *
+   * won’t observe partial updates.
+   *
+   * @template {Record<string, Cell<any>>} CellData
+   * @param {CellData} input Cells to join (may include async and sync cells).
+   * @returns {Composite<CellData>}
+   *
+   * @example
+   * const user = Cell.derivedAsync(async (get) => fetchUser(get(id)));
+   * const notifications = Cell.derivedAsync(async (get) => fetchNotifs(get(id)));
+   *
+   * const group = Cell.createComposite({ user, notifications });
+   *
+   * group.pending.listen(showSpinner);
+   * group.error.listen(showError);
+   *
+   * const u = await group.values.user.get();
+   * const n = await group.values.notifications.get();
+   */
+  static createComposite = (input) => {
+    const output = /** @type {Composite<CellData>['values']} */ ({});
+    const error = Cell.derived(() => {
+      return (
+        Object.values(input)
+          .map((cell) =>
+            cell instanceof AsyncDerivedCell ? cell.error.get() : null,
+          )
+          .find(Boolean) || null
+      );
+    });
+    const pending = Cell.derived(() => {
+      return Object.values(input)
+        .map((cell) =>
+          cell instanceof AsyncDerivedCell ? cell.pending.get() : false,
+        )
+        .some(Boolean);
+    });
+    const barrier = Cell.derivedAsync((get) => {
+      return Promise.all(Object.values(input).map(get));
+    });
+
+    const values = Object.keys(input).reduce((output, key) => {
+      const value = Cell.derivedAsync(async (get) => {
+        await get(barrier);
+        const err = error.peek();
+        if (err) throw err;
+        const nextValue = await get(input[key]);
+        await get(barrier);
+        return nextValue;
+      });
+      Reflect.set(output, key, value);
+      return output;
+    }, output);
+
+    return { values, pending, error };
+  };
+  /**
    * Executes a function within a specific LocalContext.
    * Any effects (`.listen`) or derived cells (`Cell.derived`) created synchronously
    * within the callback will be attached to the provided context.
@@ -746,6 +845,18 @@ export class Cell {
             if (e instanceof Error) cellErrors.push(e);
           }
         }
+      } else {
+        // Merge nested batch effects into parent batch so they're not lost
+        for (const [effect, value] of BATCHED_EFFECTS) {
+          currentBatchedEffects.set(effect, value);
+        }
+      }
+
+      // Merge any cells scheduled for update into the parent buffer
+      for (const cell of UPDATE_BUFFER) {
+        if (!currentUpdateBuffer.includes(cell)) {
+          currentUpdateBuffer.push(cell);
+        }
       }
 
       UPDATE_BUFFER = currentUpdateBuffer;
@@ -765,151 +876,6 @@ export class Cell {
    * @returns {value is Cell<T>} True if the value is an instance of Cell, false otherwise.
    */
   static isCell = (value) => value instanceof Cell;
-
-  /**
-   * @template T
-   * Flattens the provided value by returning the value if it is not a Cell instance, or the value of the Cell instance if it is.
-   * @param {T | Cell<T>} value - The value to be flattened.
-   * @returns {T} The flattened value.
-   */
-  static flatten = (value) => {
-    if (value instanceof Cell) {
-      if (value instanceof DerivedCell) {
-        return Cell.flatten(value.wvalue);
-      }
-      return Cell.flatten(value.wvalue);
-    }
-    if (Array.isArray(value)) {
-      // @ts-expect-error:
-      return Cell.flattenArray(value);
-    }
-    if (value instanceof Object) {
-      // @ts-expect-error:
-      return Cell.flattenObject(value);
-    }
-    return value;
-  };
-
-  /**
-   * Flattens an array by applying the `flatten` function to each element.
-   * @template T
-   * @param {Array<T | Cell<T>>} array - The array to be flattened.
-   * @returns {Array<T>} A new array with the flattened elements.
-   */
-  static flattenArray = (array) => array.map(Cell.flatten);
-
-  /**
-   * Flattens an object by applying the `flatten` function to each value.
-   * @template {object} T
-   * @param {T} object - The object to be flattened.
-   * @returns {{ [K in keyof T]: T[K] extends Cell<infer U> ? U : T[K] }} A new object with the flattened values.
-   */
-  static flattenObject = (object) => {
-    const result =
-      /** @type {{ [K in keyof T]: T[K] extends Cell<infer U> ? U : T[K] }} */ ({});
-    for (const [key, value] of Object.entries(object)) {
-      Reflect.set(result, key, Cell.flatten(value));
-    }
-    return result;
-  };
-
-  /**
-   * Wraps an asynchronous function with managed state.
-   *
-   * @template {(...args: any[]) => Promise<any>} Getter - A function that performs the asynchronous operation.
-   * @template {Parameters<Getter>[0]} [X=Parameters<Getter>[0]]
-   * @template {Awaited<ReturnType<Getter>>} [Y=Awaited<ReturnType<Getter>>]
-   * @param {Getter} getter - A function that performs the asynchronous operation.
-   * @returns {AsyncRequestAtoms<Parameters<Getter>[0], Awaited<ReturnType<Getter>>, Getter>} An object containing cells for pending, data, and error states,
-   *          as well as functions to run and reload the operation.
-   *
-   * @example
-   * const { pending, data, error, run, reload } = Cell.async(async (input) => {
-   *   const response = await fetch(`https://example.com/api/data?input=${input}`);
-   *   return response.json();
-   * });
-   *
-   * run('input');
-   */
-  static async(getter) {
-    const pending = Cell.source(false);
-    const data = Cell.source(/** @type {Y | null} */ (null));
-    const error = Cell.source(/** @type {Error | null} */ (null));
-
-    /** @type {X | undefined} */
-    let initialInput;
-    /** @type {AbortController | undefined} */
-    let controller;
-
-    async function run(input = initialInput) {
-      if (controller) controller.abort();
-      controller = new AbortController();
-
-      pending.set(true);
-      error.set(null);
-      data.set(null);
-
-      const currentController = controller;
-      try {
-        initialInput = input;
-        const _input = /** @type {X} */ (input);
-        const result = await getter.bind(currentController)(_input);
-        if (currentController?.signal.aborted) return;
-        data.set(result);
-      } catch (e) {
-        if (e instanceof Error) {
-          error.set(e);
-        } else {
-          throw e;
-        }
-      }
-      pending.set(false);
-
-      return data.get();
-    }
-
-    /**
-     * @param {X} [newInput]
-     * @param {boolean} [changeLoadingState]
-     */
-    async function reload(newInput, changeLoadingState = true) {
-      if (controller) controller.abort();
-      controller = new AbortController();
-
-      if (changeLoadingState) {
-        pending.set(true);
-      }
-
-      await Cell.batch(async () => {
-        const currentController = controller;
-        try {
-          const result = await getter.bind(currentController)(
-            /** @type {X} */ (newInput ?? initialInput),
-          );
-          if (currentController?.signal.aborted) return;
-          data.set(result);
-        } catch (e) {
-          if (e instanceof Error) {
-            error.set(e);
-          } else {
-            throw e;
-          }
-        }
-        if (changeLoadingState) {
-          pending.set(false);
-        }
-      });
-    }
-
-    return {
-      pending,
-      data,
-      error,
-      // @ts-expect-error
-      run,
-      reload,
-    };
-  }
 }
 
 /**
@@ -934,20 +900,20 @@ export class DerivedCell extends Cell {
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
       ACTIVE_DERIVED_CTX.push([this, 0]);
-      let value = this.wvalue;
       try {
-        value = computedFn();
+        return computedFn();
       } catch (e) {
         if (e instanceof Error) cellErrors.push(e);
+        return this.wvalue;
+      } finally {
+        const i = /** @type {[this, number]} */ (ACTIVE_DERIVED_CTX.pop());
+        const [, depth] = i;
+        if (depth + 1 > this[Depth]) this[Depth] = depth + 1;
       }
-      const [, depth] = /** @type {[this, number]} */ (
-        ACTIVE_DERIVED_CTX.pop()
-      );
-      if (depth + 1 > this[Depth]) this[Depth] = depth + 1;
-      return value;
     };
 
-    this.setValue(derivationWrapper());
+    /** @protected @type {T} */
+    this.wvalue = derivationWrapper();
     this.computedFn = /** @type {() => T} */ (derivationWrapper);
     throwAnyErrors();
   }
@@ -995,8 +961,9 @@ export class SourceCell extends Cell {
   constructor(value, options) {
     super();
 
-    if (options !== undefined) this.options = options;
-    this.setValue(value);
+    /** @protected */
+    this.wvalue = value;
+    this.options = options;
   }
 
   peek() {
@@ -1027,7 +994,7 @@ export class SourceCell extends Cell {
 
     if (isEqual) return;
 
-    this.setValue(value);
+    this.wvalue = value;
     this[IsScheduled] = true;
     UPDATE_BUFFER.push(this);
     if (!IS_UPDATING) triggerUpdate();
@@ -1096,6 +1063,275 @@ export class SourceCell extends Cell {
         return true;
       },
     });
+  }
+}
+
+/**
+ * A derived cell that computes its value asynchronously.
+ *
+ * AsyncDerivedCell extends the reactive paradigm to asynchronous operations,
+ * automatically re-running the async computation when dependencies change.
+ * It provides built-in state management for loading and error states.
+ *
+ * Key features:
+ * - Automatic dependency tracking via the `get` function
+ * - Automatic cancellation of in-flight operations when dependencies change
+ * - Built-in `pending` cell for loading state
+ * - Built-in `error` cell for error handling
+ * - Race condition prevention through AbortSignal
+ *
+ * @template {*} out T - The type of the resolved async value.
+ * @extends {DerivedCell<Promise<T | null>>}
+ *
+ * @example
+ * ```javascript
+ * const searchQuery = Cell.source('');
+ *
+ * const searchResults = Cell.derivedAsync(async (get, signal) => {
+ *   const query = get(searchQuery);
+ *   if (!query) return [];
+ *
+ *   const response = await fetch(`/api/search?q=${query}`, { signal });
+ *   return response.json();
+ * });
+ *
+ * // React to state changes
+ * searchResults.pending.listen((loading) => {
+ *   showSpinner(loading);
+ * });
+ *
+ * searchResults.error.listen((error) => {
+ *   if (error) showError(error.message);
+ * });
+ * ```
+ */
+export class AsyncDerivedCell extends DerivedCell {
+  /** @type {Set<Promise<any>>} */
+  #upstream = new Set();
+  /** @type {Set<AsyncDerivedCell<any>>} */
+  #consumed = new Set();
+  /** @type {undefined | (() => void)} */
+  #abandonLastComputation;
+  /** @type {AbortController} */ //@ts-expect-error: not definitively assigned.
+  #controller;
+
+  /**
+   * A cell that indicates whether the async computation is currently running.
+   * @type {SourceCell<boolean>}
+   */
+  pending = Cell.source(true);
+
+  /**
+   * A cell that holds any error thrown during the async computation.
+   * Resets to `null` when a new computation starts.
+   * @type {SourceCell<Error | null>}
+   */
+  error = Cell.source(null);
+
+  /**
+   * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => Promise<T>} fn
+   */
+  constructor(fn) {
+    /** @type {Promise<T | null>} */
+    const initialState = Promise.resolve(null);
+    super(() => initialState);
+    let lastStablePromise = initialState;
+    /** @type [this, number] */
+    let derivedCtx = [this, this[Depth]];
+    let runId = 0;
+
+    /**
+     * @template T
+     * @param {Cell<T>} cell
+     * @returns {T}
+     */
+    const get = (cell) => {
+      ACTIVE_DERIVED_CTX.push(derivedCtx);
+      const value = cell.get();
+      if (cell instanceof AsyncDerivedCell && value instanceof Promise) {
+        const currentRunId = runId;
+        value.then(() => {
+          if (runId === currentRunId) this.#consumed.add(cell);
+        });
+      }
+      ACTIVE_DERIVED_CTX.pop();
+      return value;
+    };
+
+    this.computedFn = async () => {
+      const currentRunId = ++runId;
+      this.#consumed.clear();
+      derivedCtx = [this, this[Depth]];
+
+      Cell.batch(() => {
+        this.pending.set(true);
+        this.error.set(null);
+      });
+
+      this.#controller?.abort();
+      this.#controller = new AbortController();
+
+      /** @type {null | ((value: boolean) => void)} */
+      let resolveChangedState = null;
+      /** @type {Promise<boolean>} */
+      const valueHasChanged = new Promise((resolve) => {
+        resolveChangedState = resolve;
+      });
+      // if this cell discards this promise and starts another,
+      // we do not want to its children to be stuck waiting for the old.
+      // We are not using signal.addEventListener('abort') here because
+      // the controller aborts too early (before the next promise even starts),
+      // and we want the next promise to already be notified to the children,
+      // so they don't resolve prematurely.
+      /** @type {undefined | (() => void)} */
+      let abandonComputation;
+      /** @type {Promise<T | null>} */
+      const tripwire = new Promise((resolve) => {
+        abandonComputation = () => resolve(lastStablePromise);
+      });
+
+      const current = Promise.race([
+        tripwire,
+        new Promise((resolve) => resolve(fn(get, this.#controller.signal))),
+      ])
+        .catch((error) => {
+          if (currentRunId === runId) {
+            Cell.batch(() => {
+              this.pending.set(false);
+              this.error.set(error);
+            });
+          }
+          return lastStablePromise;
+        })
+        .then(async (value) => {
+          if (currentRunId === runId) {
+            this.pending.set(false);
+            resolveChangedState?.(!deepEqual(await lastStablePromise, value));
+          } else {
+            resolveChangedState?.(false);
+          }
+          return value;
+        });
+      this.wvalue = current;
+
+      this.#notify(current, valueHasChanged, lastStablePromise, initialState);
+      this.#abandonLastComputation?.();
+      this.#abandonLastComputation = abandonComputation;
+
+      current.finally(async () => {
+        if (currentRunId !== runId) return;
+        if (lastStablePromise === initialState) {
+          // We only run update() for subsequent changes, not initial resolution.
+          lastStablePromise = current;
+          return;
+        }
+        lastStablePromise = current;
+        if (derivedCtx[1] + 1 > this[Depth]) this[Depth] = derivedCtx[1] + 1;
+        if (await valueHasChanged) this.update();
+      });
+
+      return this.wvalue;
+    };
+    // First call.
+    this.computedFn();
+  }
+
+  /**
+   * @param {Promise<any>} promise
+   * @param {Promise<boolean>} valueHasChanged
+   * @param {Promise<any>} lastStablePromise
+   * @param {Promise<any>} initialState
+   */
+  #notify(promise, valueHasChanged, lastStablePromise, initialState) {
+    for (const child of this.derivations) {
+      if (!(child instanceof AsyncDerivedCell)) continue;
+      if (child.#upstream.has(promise)) continue;
+
+      // Only direct children should be scheduled based on this cell's valueHasChanged.
+      // Grandchildren will be scheduled by their direct parent when it computes.
+      promise.then(async () => {
+        child.#upstream.delete(promise);
+        if (lastStablePromise === initialState) {
+          return;
+        }
+        // If the child is already computing and it has not tried to read the parent,
+        // it need not be restarted. When it tries to access the parent,
+        // it will receive the most recent value.
+        if (child.pending.peek() && !child.#consumed.has(this)) {
+          return;
+        }
+        if (!child[IsScheduled] && (await valueHasChanged)) {
+          UPDATE_BUFFER.push(child);
+          if (!IS_UPDATING) triggerUpdate();
+        }
+      });
+      child.#upstream.add(promise);
+      // Propagate ONLY the upstream waiting to grandchildren (not the scheduling).
+      // This ensures grandchildren wait for this ancestor to complete,
+      // but they'll be scheduled by their direct parent's #notify, not ours.
+      child.#notifyUpstreamOnly(promise);
+    }
+  }
+
+  /**
+   * Propagates upstream tracking to grandchildren without scheduling them.
+   * This ensures they wait for the ancestor to complete when calling .get().
+   * @param {Promise<any>} promise
+   */
+  #notifyUpstreamOnly(promise) {
+    for (const child of this.derivations) {
+      if (!(child instanceof AsyncDerivedCell)) continue;
+      if (child.#upstream.has(promise)) continue;
+
+      child.#upstream.add(promise);
+      promise.finally(() => child.#upstream.delete(promise));
+      // Continue propagating upstream tracking down the chain
+      child.#notifyUpstreamOnly(promise);
+    }
+  }
+
+  /**
+   * Returns the current value of the async cell.
+   * @returns {Promise<T | null>}
+   */
+  async get() {
+    super.get(); // Forces a dependency registration in sync time.
+    while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
+    return new Promise((resolve) => {
+      if (this.pending.peek()) {
+        this.pending.listen(() => resolve(this.wvalue), { once: true });
+      } else resolve(this.wvalue);
+    });
+  }
+
+  [DisposeAsyncCell]() {
+    this.#controller?.abort();
+    this.#abandonLastComputation?.();
+  }
+  /**
+   * Returns the current value of the async cell without registering dependencies.
+   * Like get(), this waits for upstream promises and pending state to resolve,
+   * but it does not register this cell as a dependency of the calling context.
+   * @returns {Promise<T | null>} A promise that resolves to the current value.
+   */
+  async peek() {
+    while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
+    return new Promise((resolve) => {
+      if (this.pending.peek()) {
+        this.pending.listen(() => resolve(this.wvalue), { once: true });
+      } else {
+        resolve(this.wvalue);
+      }
+    });
+  }
+
+  /**
+   * Revalidates the async cell by recomputing its value.
+   * This will abort any in-flight computation and start a new one.
+   * @returns {void}
+   */
+  revalidate() {
+    this.computedFn();
   }
 }
 
