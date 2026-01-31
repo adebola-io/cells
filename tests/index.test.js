@@ -1,5 +1,7 @@
-import { describe, expect, test, vi, beforeEach, afterEach } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { Cell, SourceCell } from '../library/index.js';
+
+const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
 describe('Cells', () => {
   test('Creates a reactive Cell of type T', () => {
@@ -1965,17 +1967,20 @@ describe('Cell.derivedAsync', () => {
       const source = Cell.source(2);
 
       const a = Cell.derivedAsync(async (get) => {
+        console.log('\nderiving a');
         await new Promise((r) => setTimeout(r, 10));
         return get(source);
       });
 
       const b = Cell.derivedAsync(async (get) => {
+        console.log('deriving b');
         const val = await get(a);
         await new Promise((r) => setTimeout(r, 15));
         return val * 10;
       });
 
       const c = Cell.derivedAsync(async (get) => {
+        console.log('deriving c');
         const val = await get(a);
         await new Promise((r) => setTimeout(r, 5));
         return val + 100;
@@ -1984,6 +1989,7 @@ describe('Cell.derivedAsync', () => {
       const d = Cell.derivedAsync(async (get) => {
         const bVal = await get(b);
         const cVal = await get(c);
+        console.log('deriving d');
         await new Promise((r) => setTimeout(r, 10));
         return bVal + cVal;
       });
@@ -1998,6 +2004,72 @@ describe('Cell.derivedAsync', () => {
       expect(await b.get()).toBe(50);
       expect(await c.get()).toBe(105);
       expect(await d.get()).toBe(155);
+
+      source.set(10);
+      source.set(11);
+      await vi.advanceTimersByTimeAsync(100);
+
+      expect(await a.get()).toBe(11);
+      expect(await b.get()).toBe(110);
+      expect(await c.get()).toBe(111);
+      expect(await d.get()).toBe(221);
+    });
+
+    test('downstream async derived is not restarted when a slower upstream dependency settles later', async () => {
+      const source = Cell.source(2);
+
+      const a = Cell.derivedAsync(async (get) => {
+        await delay(10);
+        return get(source);
+      });
+
+      const b = Cell.derivedAsync(async (get) => {
+        const val = await get(a);
+        await delay(15);
+        return val * 10;
+      });
+
+      const c = Cell.derivedAsync(async (get) => {
+        const val = await get(a);
+        await delay(5);
+        return val + 100;
+      });
+
+      const dRuns = vi.fn();
+      const d = Cell.derivedAsync(async (get) => {
+        dRuns(); // counts "deriving d"
+        const bVal = await get(b);
+        const cVal = await get(c);
+        await delay(10);
+        return bVal + cVal;
+      });
+
+      // Let initial computation settle
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await d.get()).toBe(122);
+
+      // Measure only runs caused by the next source update
+      dRuns.mockClear();
+
+      source.set(5);
+
+      // c completes at ~15ms after the set (a:10ms + c:5ms), so d should start once here
+      await vi.advanceTimersByTimeAsync(14);
+      expect(dRuns).toHaveBeenCalledTimes(0);
+
+      await vi.advanceTimersByTimeAsync(2);
+      expect(dRuns).toHaveBeenCalledTimes(1);
+      expect(d.pending.peek()).toBe(true); // d is running, waiting on b
+
+      // b completes at ~25ms after the set (a:10ms + b:15ms).
+      // d must NOT restart when b settles later.
+      await vi.advanceTimersByTimeAsync(10); // total advanced since set: 26ms
+      expect(dRuns).toHaveBeenCalledTimes(1);
+
+      // Finish everything
+      await vi.advanceTimersByTimeAsync(50);
+      expect(await d.get()).toBe(155);
+      expect(dRuns).toHaveBeenCalledTimes(1);
     });
 
     test('error in chain propagates but does not corrupt state', async () => {
@@ -3230,6 +3302,63 @@ describe('Cell.derivedAsync', () => {
       a.set(2);
       await vi.advanceTimersByTimeAsync(100);
       expect(await cPromise).toBe(2000);
+    });
+
+    test('revalidate() should manually trigger recomputation', async () => {
+      const source = Cell.source(5);
+      let computeCount = 0;
+
+      const asyncCell = Cell.derivedAsync(async (get) => {
+        computeCount++;
+        await new Promise((r) => setTimeout(r, 20));
+        return get(source) * 2;
+      });
+
+      await vi.advanceTimersByTimeAsync(30);
+      expect(await asyncCell.get()).toBe(10);
+      expect(computeCount).toBe(1);
+
+      // Manually revalidate without changing source
+      asyncCell.revalidate();
+
+      // Should be in pending state during recomputation
+      expect(asyncCell.pending.get()).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(30);
+
+      // Value should be the same but recomputed
+      expect(await asyncCell.get()).toBe(10);
+      expect(computeCount).toBe(2);
+      expect(asyncCell.pending.get()).toBe(false);
+    });
+
+    test('revalidate() should abort in-flight computation', async () => {
+      vi.useFakeTimers();
+      const source = Cell.source(1);
+      let abortedCount = 0;
+
+      const asyncCell = Cell.derivedAsync(async (get, signal) => {
+        signal.addEventListener('abort', () => abortedCount++);
+        await new Promise((r) => setTimeout(r, 100));
+        return get(source) * 10;
+      });
+
+      // Start initial computation
+      const promise1 = asyncCell.get();
+
+      // Advance partially
+      await vi.advanceTimersByTimeAsync(50);
+
+      // Revalidate should abort the first computation
+      asyncCell.revalidate();
+
+      await vi.advanceTimersByTimeAsync(150);
+
+      // The first promise should resolve with the new value
+      expect(await promise1).toBe(10);
+      expect(abortedCount).toBe(1);
+
+      vi.useRealTimers();
     });
   });
 

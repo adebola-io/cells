@@ -1028,6 +1028,8 @@ export class SourceCell extends Cell {
 export class AsyncDerivedCell extends DerivedCell {
   /** @type {Set<Promise<any>>} */
   #upstream = new Set();
+  /** @type {Set<AsyncDerivedCell<any>>} */
+  #consumed = new Set();
   /** @type {undefined | (() => void)} */
   #abandonLastComputation;
   /** @type {AbortController} */ //@ts-expect-error: not definitively assigned.
@@ -1056,6 +1058,7 @@ export class AsyncDerivedCell extends DerivedCell {
     let lastStablePromise = initialState;
     /** @type [this, number] */
     let derivedCtx = [this, this[Depth]];
+    let runId = 0;
 
     /**
      * @template T
@@ -1065,11 +1068,19 @@ export class AsyncDerivedCell extends DerivedCell {
     const get = (cell) => {
       ACTIVE_DERIVED_CTX.push(derivedCtx);
       const value = cell.get();
+      if (cell instanceof AsyncDerivedCell && value instanceof Promise) {
+        const currentRunId = runId;
+        value.then(() => {
+          if (runId === currentRunId) this.#consumed.add(cell);
+        });
+      }
       ACTIVE_DERIVED_CTX.pop();
       return value;
     };
 
     this.computedFn = async () => {
+      const currentRunId = ++runId;
+      this.#consumed.clear();
       derivedCtx = [this, this[Depth]];
 
       Cell.batch(() => {
@@ -1104,7 +1115,7 @@ export class AsyncDerivedCell extends DerivedCell {
         new Promise((resolve) => resolve(fn(get, this.#controller.signal))),
       ])
         .catch((error) => {
-          if (this.wvalue === current) {
+          if (currentRunId === runId) {
             Cell.batch(() => {
               this.pending.set(false);
               this.error.set(error);
@@ -1113,7 +1124,7 @@ export class AsyncDerivedCell extends DerivedCell {
           return lastStablePromise;
         })
         .then(async (value) => {
-          if (this.wvalue === current) {
+          if (currentRunId === runId) {
             this.pending.set(false);
             resolveChangedState?.(!deepEqual(await lastStablePromise, value));
           }
@@ -1126,7 +1137,7 @@ export class AsyncDerivedCell extends DerivedCell {
       this.#abandonLastComputation = abandonComputation;
 
       current.finally(async () => {
-        if (this.wvalue !== current) return;
+        if (currentRunId !== runId) return;
         if (lastStablePromise === initialState) {
           // We only run update() for subsequent changes, not initial resolution.
           lastStablePromise = current;
@@ -1159,6 +1170,12 @@ export class AsyncDerivedCell extends DerivedCell {
       promise.then(async () => {
         child.#upstream.delete(promise);
         if (lastStablePromise === initialState) {
+          return;
+        }
+        // If the child is already computing and it has not tried to read the parent,
+        // it need not be restarted. When it tries to access the parent,
+        // it will receive the most recent value.
+        if (child.pending.peek() && !child.#consumed.has(this)) {
           return;
         }
         if (!child[IsScheduled] && (await valueHasChanged)) {
