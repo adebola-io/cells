@@ -1046,8 +1046,28 @@ export class AsyncCell extends DerivedCell {
   #consumed = new Set();
   /** @type {undefined | (() => void)} */
   #abandonLastComputation;
-  /** @protected @type {AbortController} */ //@ts-expect-error: not definitively assigned.
-  controller;
+  /** @type {AbortController | undefined} */
+  #controller;
+
+  /**
+   * Aborts the current computation if one is running.
+   * @returns {void}
+   */
+  abort() {
+    this.#controller?.abort();
+  }
+
+  /**
+   * Gets the AbortSignal for the current computation.
+   * @protected
+   * @returns {AbortSignal}
+   */
+  get _signal() {
+    if (!this.#controller) {
+      this.#controller = new AbortController();
+    }
+    return this.#controller.signal;
+  }
 
   /**
    * A cell that indicates whether the async computation is currently running.
@@ -1102,8 +1122,8 @@ export class AsyncCell extends DerivedCell {
         this.error.set(null);
       });
 
-      this.controller?.abort();
-      this.controller = new AbortController();
+      this.#controller?.abort();
+      this.#controller = new AbortController();
 
       /** @type {null | ((value: boolean) => void)} */
       let resolveChangedState = null;
@@ -1126,7 +1146,7 @@ export class AsyncCell extends DerivedCell {
 
       const current = Promise.race([
         tripwire,
-        new Promise((resolve) => resolve(fn(get, this.controller.signal))),
+        new Promise((resolve) => resolve(fn(get, this._signal))),
       ])
         .catch((error) => {
           if (currentRunId === runId) {
@@ -1239,7 +1259,7 @@ export class AsyncCell extends DerivedCell {
   }
 
   [DisposeAsyncCell]() {
-    this.controller?.abort();
+    this.#controller?.abort();
     this.#abandonLastComputation?.();
   }
   /**
@@ -1377,28 +1397,31 @@ export class AsyncDerivedCell extends AsyncCell {
  *
  * @example
  * ```javascript
- * // Concurrent calls are deduplicated
  * const fetchTask = Cell.task(async (id) => {
  *   console.log('Fetching user', id);
  *   await delay(1000);
  *   return { id, name: 'User ' + id };
  * });
  *
- * // These two calls will only execute the task once
- * const promise1 = fetchTask.runWith(1);
- * const promise2 = fetchTask.runWith(1);
- * console.log(promise1 === promise2); // true
+ * // Execute the task
+ * const user = await fetchTask.runWith(1);
+ * console.log(user.name);
+ *
+ * // Execute again - each call creates a new execution
+ * const anotherUser = await fetchTask.runWith(2);
  * ```
  */
 export class AsyncTaskCell extends AsyncCell {
   /** @param {MutatorFn<I, T>} fn */
   constructor(fn) {
-    let inputAdded = false;
-    let currentInput = /** @type {I} */ (null);
+    /** @type {I | null} */
+    let currentInput = null;
 
     const computedFn = () => {
-      if (!inputAdded) return Promise.resolve(/** @type {T} */ (null));
-      return fn(currentInput, this.controller.signal);
+      if (currentInput === null)
+        return Promise.resolve(/** @type {T} */ (null));
+      const capturedInput = currentInput;
+      return fn(capturedInput, this._signal);
     };
 
     super(computedFn);
@@ -1413,6 +1436,7 @@ export class AsyncTaskCell extends AsyncCell {
      * Executes the task with the provided input.
      *
      * Each call to runWith creates a new execution of the task function.
+     * If a previous execution is still running, it will be aborted.
      *
      * @param {I} input - The input value to pass to the task function.
      * @returns {Promise<T | null>} A promise that resolves with the task result,
@@ -1435,10 +1459,11 @@ export class AsyncTaskCell extends AsyncCell {
      */
     this.runWith = async (input) => {
       const isFirstExecution = !hasExecuted;
-      inputAdded = true;
+      this.abort();
       currentInput = input;
       const value = this.computedFn();
       hasExecuted = true;
+
       // For the first execution, we need to manually trigger an update
       // since AsyncCell skips update() for the initial state.
       // We also need to schedule AsyncDerivedCell children for recomputation.
@@ -1455,7 +1480,7 @@ export class AsyncTaskCell extends AsyncCell {
           if (!IS_UPDATING) triggerUpdate();
         });
       }
-      currentInput = /** @type {I} */ (null);
+
       return value;
     };
   }

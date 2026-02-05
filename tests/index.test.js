@@ -4033,14 +4033,17 @@ describe('Cell.task()', () => {
     callCount = 0; // Reset counter
 
     // Now test concurrent calls - each should create a new promise
+    // The second call aborts the first, so the first promise resolves
+    // to the previous stable value (2) via the tripwire mechanism
     const promise1 = task.runWith(5);
     const promise2 = task.runWith(5);
 
-    // Both should resolve to the expected value
+    // First promise resolves to previous stable value (from runWith(1))
+    // Second promise resolves to new value
     const [result1, result2] = await Promise.all([promise1, promise2]);
-    // Note: Both results may be 10 or one may be null depending on execution order
-    // since currentInput is shared. The important thing is that the function
-    // was called twice (no single-flight behavior).
+    expect(result1).toBe(2); // Aborted, resolves to last stable
+    expect(result2).toBe(10); // Completes successfully
+    // Function should be called for each concurrent request
     expect(callCount).toBe(2);
   });
 
