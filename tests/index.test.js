@@ -4103,3 +4103,544 @@ describe('Cell.createComposite', () => {
     expect(Object.keys(composite.values)).toHaveLength(0);
   });
 });
+
+describe('Cell.task()', () => {
+  test('should create an AsyncTaskCell', () => {
+    const task = Cell.task(async (input) => input * 2);
+    expect(task).toBeDefined();
+    expect(task.runWith).toBeDefined();
+    expect(typeof task.runWith).toBe('function');
+  });
+
+  test('should execute task with input and return result', async () => {
+    const task = Cell.task(async (input) => input * 2);
+    const result = await task.runWith(5);
+    expect(result).toBe(10);
+  });
+
+  test('should handle string input', async () => {
+    const task = Cell.task(async (input) => input.toUpperCase());
+    const result = await task.runWith('hello');
+    expect(result).toBe('HELLO');
+  });
+
+  test('should handle object input', async () => {
+    const task = Cell.task(async (input) => ({ ...input, processed: true }));
+    const result = await task.runWith({ id: 1, name: 'test' });
+    expect(result).toEqual({ id: 1, name: 'test', processed: true });
+  });
+
+  test('should handle array input', async () => {
+    const task = Cell.task(async (input) => input.map((x) => x * 2));
+    const result = await task.runWith([1, 2, 3]);
+    expect(result).toEqual([2, 4, 6]);
+  });
+
+  test('should set pending state during execution', async () => {
+    const task = Cell.task(async (input) => {
+      await delay(10);
+      return input * 2;
+    });
+
+    // Initial state - pending should be false until runWith is called
+    expect(task.pending.get()).toBe(false);
+
+    const promise = task.runWith(5);
+    expect(task.pending.get()).toBe(true);
+
+    await promise;
+    expect(task.pending.get()).toBe(false);
+  });
+
+  test('should handle errors and set error state', async () => {
+    const task = Cell.task(async (input) => {
+      if (input < 0) {
+        throw new Error('Input must be positive');
+      }
+      return input * 2;
+    });
+
+    expect(task.error.get()).toBeNull();
+
+    const result = await task.runWith(5);
+    expect(result).toBe(10);
+    expect(task.error.get()).toBeNull();
+
+    await task.runWith(-1);
+    expect(task.error.get()).toBeInstanceOf(Error);
+    expect(task.error.get()?.message).toBe('Input must be positive');
+  });
+
+  test('should clear error on successful execution after error', async () => {
+    const shouldError = Cell.source(false);
+
+    const task = Cell.task(async (input) => {
+      if (shouldError.get()) {
+        throw new Error('Task failed');
+      }
+      return input * 2;
+    });
+
+    // First successful execution
+    let result = await task.runWith(5);
+    expect(result).toBe(10);
+    expect(task.error.get()).toBeNull();
+
+    // Error execution
+    shouldError.set(true);
+    await task.runWith(5);
+    expect(task.error.get()).toBeInstanceOf(Error);
+
+    // Recovery execution
+    shouldError.set(false);
+    result = await task.runWith(3);
+    expect(result).toBe(6);
+    expect(task.error.get()).toBeNull();
+  });
+
+  test('should return the same promise for concurrent calls', async () => {
+    let callCount = 0;
+    const task = Cell.task(async (input) => {
+      callCount++;
+      await delay(10);
+      return input * 2;
+    });
+
+    // First, complete any initial computation
+    await task.runWith(1);
+    callCount = 0; // Reset counter
+
+    // Now test concurrent calls - both should use same cached promise
+    const promise1 = task.runWith(5);
+    const promise2 = task.runWith(5);
+
+    // Both should resolve to the same value
+    const [result1, result2] = await Promise.all([promise1, promise2]);
+    expect(result1).toBe(10);
+    expect(result2).toBe(10);
+    // Function should only be called once for concurrent requests
+    expect(callCount).toBe(1);
+  });
+
+  test('should create new promise for subsequent calls after completion', async () => {
+    let callCount = 0;
+    const task = Cell.task(async (input) => {
+      callCount++;
+      return input * 2;
+    });
+
+    const promise1 = task.runWith(5);
+    await promise1;
+
+    const promise2 = task.runWith(5);
+    expect(promise1).not.toBe(promise2);
+
+    const result = await promise2;
+    expect(result).toBe(10);
+    expect(callCount).toBe(2);
+  });
+
+  test('should pass AbortSignal to task function', async () => {
+    const task = Cell.task(async (input, signal) => {
+      expect(signal).toBeInstanceOf(AbortSignal);
+      expect(signal.aborted).toBe(false);
+      await delay(10);
+      if (signal.aborted) {
+        throw new Error('Aborted');
+      }
+      return input * 2;
+    });
+
+    const result = await task.runWith(5);
+    expect(result).toBe(10);
+  });
+
+  test('should handle task returning different types', async () => {
+    const task = Cell.task(async (input) => {
+      if (input === 'number') return 42;
+      if (input === 'string') return 'hello';
+      if (input === 'object') return { key: 'value' };
+      if (input === 'array') return [1, 2, 3];
+      if (input === 'null') return null;
+      if (input === 'undefined') return undefined;
+      return 'default';
+    });
+
+    expect(await task.runWith('number')).toBe(42);
+    expect(await task.runWith('string')).toBe('hello');
+    expect(await task.runWith('object')).toEqual({ key: 'value' });
+    expect(await task.runWith('array')).toEqual([1, 2, 3]);
+    expect(await task.runWith('null')).toBeNull();
+    expect(await task.runWith('undefined')).toBeUndefined();
+  });
+
+  test('should be listenable for value changes', async () => {
+    const task = Cell.task(async (input) => input * 2);
+    const values = [];
+
+    task.listen(async (promise) => {
+      const value = await promise;
+      values.push(value);
+    });
+
+    await task.runWith(5);
+    await task.runWith(10);
+    await task.runWith(15);
+
+    // Wait for all async listeners to complete
+    await delay(0);
+
+    expect(values).toEqual([10, 20, 30]);
+  });
+
+  test('should be listenable for error state', async () => {
+    const shouldError = Cell.source(false);
+    const errors = [];
+
+    const task = Cell.task(async (input, signal) => {
+      if (shouldError.get()) {
+        throw new Error(`Error ${input}`);
+      }
+      return input * 2;
+    });
+
+    task.error.listen((err) => {
+      if (err) errors.push(err.message);
+    });
+
+    await task.runWith(1);
+    expect(errors).toEqual([]);
+
+    shouldError.set(true);
+    await task.runWith(2);
+    expect(errors).toContain('Error 2');
+
+    shouldError.set(false);
+    await task.runWith(3);
+    expect(errors).toContain('Error 2');
+  });
+
+  test('should handle async operations with delay', async () => {
+    const task = Cell.task(async (input) => {
+      await delay(50);
+      return `${input} processed`;
+    });
+
+    const startTime = Date.now();
+    const result = await task.runWith('data');
+    const endTime = Date.now();
+
+    expect(result).toBe('data processed');
+    expect(endTime - startTime).toBeGreaterThanOrEqual(45);
+  });
+
+  test('should handle synchronous-looking task', async () => {
+    const task = Cell.task((input) => {
+      return Promise.resolve(input * 3);
+    });
+
+    const result = await task.runWith(7);
+    expect(result).toBe(21);
+  });
+
+  test('should not auto-execute task function on creation', async () => {
+    let executed = false;
+    const task = Cell.task(async (input) => {
+      executed = true;
+      return input;
+    });
+
+    // Task function should not have been called yet
+    expect(executed).toBe(false);
+    // Pending should be false initially
+    expect(task.pending.get()).toBe(false);
+
+    await task.runWith(1);
+    expect(executed).toBe(true);
+    expect(task.pending.get()).toBe(false);
+  });
+
+  test('should handle multiple different inputs', async () => {
+    const task = Cell.task(async (input) => input * 2);
+
+    const result1 = await task.runWith(5);
+    const result2 = await task.runWith(10);
+    const result3 = await task.runWith('hello');
+
+    expect(result1).toBe(10);
+    expect(result2).toBe(20);
+    expect(result3).toBeNaN(); // "hello" * 2 = NaN
+  });
+
+  test('should work with Cell.derived to create dependent computations', async () => {
+    const task = Cell.task(async (input) => input * 2);
+
+    const derived = Cell.derived(() => {
+      return task.pending.get() ? 'loading' : 'ready';
+    });
+
+    // Initially ready since pending is false
+    expect(derived.get()).toBe('ready');
+
+    const promise = task.runWith(5);
+    expect(derived.get()).toBe('loading');
+
+    await promise;
+    expect(derived.get()).toBe('ready');
+  });
+
+  test('should work with Cell.createComposite for single task', async () => {
+    const task = Cell.task(async (input) => {
+      await delay(10);
+      return input * 2;
+    });
+
+    const composite = Cell.createComposite({ result: task });
+
+    // Before running, composite should not be pending
+    expect(composite.pending.get()).toBe(false);
+
+    // Execute the task
+    const runPromise = task.runWith(5);
+    expect(composite.pending.get()).toBe(true);
+
+    await runPromise;
+    expect(composite.pending.get()).toBe(false);
+
+    const value = await composite.values.result.get();
+    expect(value).toBe(10);
+  });
+
+  test('should work with Cell.createComposite for multiple tasks', async () => {
+    const taskA = Cell.task(async (input) => {
+      await delay(10);
+      return input * 2;
+    });
+    const taskB = Cell.task(async (input) => {
+      await delay(20);
+      return input + 100;
+    });
+
+    const composite = Cell.createComposite({ taskA, taskB });
+
+    expect(composite.pending.get()).toBe(false);
+
+    // Start both tasks
+    const promiseA = taskA.runWith(5);
+    const promiseB = taskB.runWith(50);
+
+    // Composite should be pending while any task is running
+    expect(composite.pending.get()).toBe(true);
+
+    await Promise.all([promiseA, promiseB]);
+    expect(composite.pending.get()).toBe(false);
+
+    const valueA = await composite.values.taskA.get();
+    const valueB = await composite.values.taskB.get();
+
+    expect(valueA).toBe(10);
+    expect(valueB).toBe(150);
+  });
+
+  test('should propagate task errors to composite', async () => {
+    const task = Cell.task(async (input) => {
+      if (input < 0) {
+        throw new Error('Negative input not allowed');
+      }
+      return input * 2;
+    });
+
+    const composite = Cell.createComposite({ task });
+
+    expect(composite.error.get()).toBeNull();
+
+    // Trigger an error
+    await task.runWith(-1);
+    await delay(0);
+
+    expect(composite.error.get()).toBeInstanceOf(Error);
+    expect(composite.error.get()?.message).toBe('Negative input not allowed');
+  });
+
+  test('should allow tasks in composite to be independently executed', async () => {
+    const taskA = Cell.task(async (input) => input * 2);
+    const taskB = Cell.task(async (input) => input + 10);
+
+    const composite = Cell.createComposite({ taskA, taskB });
+
+    // Execute only taskA
+    await taskA.runWith(5);
+    let valueA = await composite.values.taskA.get();
+    expect(valueA).toBe(10);
+
+    // Execute taskB later
+    await taskB.runWith(20);
+    let valueB = await composite.values.taskB.get();
+    expect(valueB).toBe(30);
+
+    // Execute both again with different values
+    await taskA.runWith(100);
+    await taskB.runWith(5);
+
+    valueA = await composite.values.taskA.get();
+    valueB = await composite.values.taskB.get();
+
+    expect(valueA).toBe(200);
+    expect(valueB).toBe(15);
+  });
+
+  test('should handle mixed sync and task cells in composite', async () => {
+    const syncCell = Cell.source(42);
+    const task = Cell.task(async (input) => {
+      await delay(10);
+      return input * 3;
+    });
+
+    const composite = Cell.createComposite({ sync: syncCell, async: task });
+
+    // Sync cell should be immediately available
+    const syncValue = await composite.values.sync.get();
+    expect(syncValue).toBe(42);
+
+    // Execute task
+    const runPromise = task.runWith(5);
+    expect(composite.pending.get()).toBe(true);
+
+    await runPromise;
+    const asyncValue = await composite.values.async.get();
+    expect(asyncValue).toBe(15);
+    expect(composite.pending.get()).toBe(false);
+  });
+
+  test('should work with Cell.derivedAsync for dependent async computations', async () => {
+    const task = Cell.task(async (userId) => {
+      await delay(10);
+      return { id: userId, name: `User ${userId}` };
+    });
+
+    // Create a derivedAsync that depends on the task
+    const userDetails = Cell.derivedAsync(async (get) => {
+      const user = await get(task);
+      await delay(5);
+      return { ...user, details: `Details for ${user.name}` };
+    });
+
+    // Execute the task
+    await task.runWith(123);
+
+    // The derivedAsync should have computed based on task result
+    const details = await userDetails.get();
+    expect(details).toEqual({
+      id: 123,
+      name: 'User 123',
+      details: 'Details for User 123',
+    });
+  });
+
+  test('derivedAsync should recompute when task is re-executed', async () => {
+    const task = Cell.task(async (value) => {
+      await delay(5);
+      return value * 2;
+    });
+
+    const doubled = Cell.derivedAsync(async (get) => {
+      const result = await get(task);
+      await delay(5);
+      return result * 2;
+    });
+
+    // First execution
+    await task.runWith(5);
+    let result = await doubled.get();
+    expect(result).toBe(20); // (5 * 2) * 2
+
+    // Second execution - derivedAsync should recompute
+    await task.runWith(10);
+    result = await doubled.get();
+    expect(result).toBe(40); // (10 * 2) * 2
+  });
+
+  test('derivedAsync pending state should reflect task execution', async () => {
+    const task = Cell.task(async (input) => {
+      await delay(20);
+      return input;
+    });
+
+    const derived = Cell.derivedAsync(async (get) => {
+      const value = await get(task);
+      return value * 2;
+    });
+
+    // Initially not pending
+    expect(derived.pending.get()).toBe(true);
+
+    // Start task execution
+    const taskPromise = task.runWith(5);
+
+    // Both should be pending
+    expect(task.pending.get()).toBe(true);
+    expect(derived.pending.get()).toBe(true);
+
+    await taskPromise;
+
+    // Wait for derived to complete
+    await derived.get();
+
+    expect(task.pending.get()).toBe(false);
+    expect(derived.pending.get()).toBe(false);
+  });
+
+  test('should handle errors from task in derivedAsync', async () => {
+    const task = Cell.task(async (shouldFail) => {
+      await delay(5);
+      if (shouldFail) {
+        throw new Error('Task failed');
+      }
+      return 'success';
+    });
+
+    const derived = Cell.derivedAsync(async (get) => {
+      const result = await get(task);
+      return `Derived: ${result}`;
+    });
+
+    // Successful execution
+    await task.runWith(false);
+    await delay(0);
+    let result = await derived.get();
+    expect(result).toBe('Derived: success');
+    expect(task.error.get()).toBeNull();
+
+    // Failed execution - task keeps last successful value (SWR pattern)
+    await task.runWith(true);
+    await delay(0);
+    result = await derived.get();
+    expect(result).toBe('Derived: success'); // Keeps last successful value
+    expect(task.error.get()).toBeInstanceOf(Error);
+    expect(task.error.get()?.message).toBe('Task failed');
+  });
+
+  test('derivedAsync can read multiple tasks', async () => {
+    const taskA = Cell.task(async (value) => {
+      await delay(10);
+      return value * 2;
+    });
+
+    const taskB = Cell.task(async (value) => {
+      await delay(15);
+      return value + 10;
+    });
+
+    const combined = Cell.derivedAsync(async (get) => {
+      const [a, b] = await Promise.all([get(taskA), get(taskB)]);
+      return a + b;
+    });
+
+    // Execute both tasks
+    await taskA.runWith(5);
+    await taskB.runWith(3);
+
+    const result = await combined.get();
+    expect(result).toBe(23); // (5 * 2) + (3 + 10)
+  });
+});
