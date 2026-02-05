@@ -1395,8 +1395,6 @@ export class AsyncTaskCell extends AsyncCell {
   constructor(fn) {
     let inputAdded = false;
     let currentInput = /** @type {I} */ (null);
-    /** @type {Promise<T | null> | undefined} */
-    let value;
 
     const computedFn = () => {
       if (!inputAdded) return Promise.resolve(/** @type {T} */ (null));
@@ -1414,9 +1412,7 @@ export class AsyncTaskCell extends AsyncCell {
     /**
      * Executes the task with the provided input.
      *
-     * If the task is already running when this is called, the same promise
-     * will be returned (concurrent calls are deduplicated). Once the task
-     * completes, subsequent calls will create a new execution.
+     * Each call to runWith creates a new execution of the task function.
      *
      * @param {I} input - The input value to pass to the task function.
      * @returns {Promise<T | null>} A promise that resolves with the task result,
@@ -1441,12 +1437,8 @@ export class AsyncTaskCell extends AsyncCell {
       const isFirstExecution = !hasExecuted;
       inputAdded = true;
       currentInput = input;
-      if (value) return value;
-      value = this.computedFn();
+      const value = this.computedFn();
       hasExecuted = true;
-      value.then(() => {
-        value = undefined;
-      });
       // For the first execution, we need to manually trigger an update
       // since AsyncCell skips update() for the initial state.
       // We also need to schedule AsyncDerivedCell children for recomputation.
