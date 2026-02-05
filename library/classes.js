@@ -36,8 +36,6 @@
  * @typedef {object} CellOptions
  * @property {boolean} [immutable]
  * Whether the cell should be immutable. If set to true, the cell will not allow updates and will throw an error if the value is changed.
- * @property {boolean} [deep]
- * Whether the cell should watch for changes deep into the given value. By default the cell only reacts to changes at the top level.
  * @property {(oldValue: T, newValue: T) => boolean} [equals]
  * A function that determines whether two values are equal. If not provided, the default equality function will be used.
  */
@@ -225,27 +223,6 @@ function throwAnyErrors() {
     throw new CellUpdateError(errors);
   }
 }
-
-const mutativeMapMethods = new Set(['set', 'delete', 'clear']);
-const mutativeSetMethods = new Set(['add', 'delete', 'clear']);
-const mutativeArrayMethods = new Set([
-  'push',
-  'pop',
-  'shift',
-  'unshift',
-  'splice',
-  'sort',
-  'reverse',
-]);
-const mutativeDateMethods = new Set([
-  'setDate',
-  'setMonth',
-  'setFullYear',
-  'setHours',
-  'setMinutes',
-  'setSeconds',
-  'setMilliseconds',
-]);
 
 /** @template T */
 class Effect {
@@ -936,8 +913,6 @@ export class DerivedCell extends Cell {
  * @extends {Cell<T>}
  * A cell whose value can be directly modified.
  * Source cells are the primary way to introduce reactivity.
- * They can hold any value type and will automatically handle proxying of objects
- * to enable deep reactivity when needed.
  *
  * @example
  * ```typescript
@@ -975,7 +950,7 @@ export class SourceCell extends Cell {
    * @returns {T} The value of the Cell.
    */
   get() {
-    return this.#proxy(this.revalued);
+    return this.revalued;
   }
 
   /**
@@ -998,71 +973,6 @@ export class SourceCell extends Cell {
     this[IsScheduled] = true;
     UPDATE_BUFFER.push(this);
     if (!IS_UPDATING) triggerUpdate();
-  }
-
-  /**
-   * Proxies the provided value deeply, allowing it to be observed and updated.
-   * @template T
-   * @param {T} value - The value to be proxied.
-   * @returns {T} - The proxied value.
-   */
-  #proxy(value) {
-    if (typeof value !== 'object' || value === null) return value;
-    return new Proxy(value, {
-      get: (target, prop) => {
-        this.revalued;
-        if (this.options?.deep) {
-          // @ts-expect-error: Direct access is faster than Reflection here.
-          return this.#proxy(target[prop]);
-        }
-
-        if (typeof prop === 'string') {
-          const isMutativeMethod =
-            (target instanceof Map && mutativeMapMethods.has(prop)) ||
-            (target instanceof Set && mutativeSetMethods.has(prop)) ||
-            (target instanceof Date && mutativeDateMethods.has(prop)) ||
-            ((ArrayBuffer.isView(target) || Array.isArray(target)) &&
-              mutativeArrayMethods.has(prop));
-
-          if (isMutativeMethod) {
-            // @ts-expect-error: Direct access is faster than Reflection here.
-            return (...args) => {
-              // @ts-expect-error: Direct access is faster than Reflection here.
-              const result = target[prop](...args);
-              UPDATE_BUFFER.push(this);
-              this[IsScheduled] = true;
-              if (!IS_UPDATING) triggerUpdate();
-              return result;
-            };
-          }
-        }
-
-        // @ts-expect-error: Direct access is faster than Reflection here.
-        let value = target[prop];
-
-        if (typeof value === 'function') {
-          value = value.bind(target);
-        }
-
-        return value;
-      },
-      set: (target, prop, value) => {
-        // @ts-expect-error: dynamic object access.
-        const formerValue = target[prop];
-        const isEqual = deepEqual(formerValue, value);
-        if (!isEqual) {
-          // @ts-expect-error: dynamic object access.
-          target[prop] = value;
-          UPDATE_BUFFER.push(this);
-          this[IsScheduled] = true;
-          if (!IS_UPDATING) {
-            triggerUpdate();
-          }
-        }
-
-        return true;
-      },
-    });
   }
 }
 

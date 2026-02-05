@@ -19,13 +19,10 @@ describe('Cells', () => {
   });
 
   test('Cell should ignore updates for deeply equal values', () => {
-    const cell = Cell.source(
-      {
-        a: 1,
-        b: { c: 2, d: 3 },
-      },
-      { deep: true },
-    );
+    const cell = Cell.source({
+      a: 1,
+      b: { c: 2, d: 3 },
+    });
     const callback = vi.fn();
     cell.listen(callback);
 
@@ -40,12 +37,6 @@ describe('Cells', () => {
       b: { c: 2, d: 4 },
     });
     expect(callback).toHaveBeenCalledTimes(1);
-
-    cell.get().b.c = 2;
-    expect(callback).toHaveBeenCalledTimes(1);
-
-    cell.get().b.c = 67;
-    expect(callback).toHaveBeenCalledTimes(2);
   });
 
   test('Creates a reactive Cell with null or undefined', () => {
@@ -744,156 +735,6 @@ describe('Derived cells', () => {
     a.set(10);
     expect(h.get()).toBe(16);
     expect(i.get()).toBe(28);
-  });
-});
-
-describe('Nested cells', () => {
-  test('Cell of object type should be reactive', () => {
-    const cell = Cell.source({ a: 1 });
-    const cell2 = Cell.source({ b: 10 });
-
-    const derived = Cell.derived(() => cell.get().a + cell2.get().b);
-
-    cell.get().a = 2; // Deep reactivity test
-    expect(derived.get()).toBe(12);
-
-    cell2.get().b = 20; // Deep reactivity test
-    expect(derived.get()).toBe(22);
-  });
-
-  test('Derived cell of object type should run callback when value changes', () => {
-    const cell = Cell.source({ a: 'hello', b: 1, c: true, d: null });
-    const callback = vi.fn();
-
-    const derived = Cell.derived(() => {
-      callback();
-      return cell.get().a;
-    });
-    expect(derived.get()).toBe('hello');
-    expect(callback).toHaveBeenCalledTimes(1);
-
-    cell.set({ a: 'world', b: 2, c: false, d: null });
-    expect(callback).toHaveBeenCalledTimes(2);
-  });
-
-  test('Cell of map type should be able to read entries', () => {
-    const cell = Cell.source(new Map());
-    cell.get().set('a', 1);
-    cell.get().set('b', 2);
-
-    const array = Cell.derived(() => Array.from(cell.get().entries()));
-
-    cell.get().set('c', 3);
-
-    expect(array.get()).toEqual([
-      ['a', 1],
-      ['b', 2],
-      ['c', 3],
-    ]);
-  });
-
-  test('Cell of array type should be reactive', () => {
-    const cell = Cell.source([1, 2, 3]);
-
-    const sum = Cell.derived(() => cell.get().reduce((a, b) => a + b, 0));
-    expect(sum.get()).toBe(6);
-
-    cell.get()[0] = 3; // Deep reactivity test
-    expect(sum.get()).toBe(8);
-
-    cell.get().push(4); // Deep reactivity test
-    expect(sum.get()).toBe(12);
-
-    cell.get().pop(); // Deep reactivity test
-    expect(sum.get()).toBe(8);
-  });
-
-  test('Cell of nested array type should be reactive', () => {
-    /** @type {SourceCell<[number, [number, number], number]>} */
-    const cell = Cell.source([1, [2, 3], 4], { deep: true });
-    const d1 = Cell.derived(() => cell.get()[1][1] + 2);
-    const d2 = Cell.derived(() => cell.get()[1][0] + d1.get());
-
-    expect(d1.get()).toBe(5);
-    expect(d2.get()).toBe(7);
-    cell.get()[1][1] = 5; // Deep reactivity test
-
-    expect(d1.get()).toBe(7);
-    expect(d2.get()).toBe(9);
-  });
-
-  test('Cells of maps should be reactive', () => {
-    const cell = Cell.source(new Map());
-    const derived = Cell.derived(() => cell.get().get('a'));
-
-    expect(derived.get()).toBe(undefined);
-
-    cell.get().set('a', 1); // Deep reactivity test
-    expect(derived.get()).toBe(1);
-
-    cell.get().set('a', 2); // Deep reactivity test
-    expect(derived.get()).toBe(2);
-  });
-
-  test('Cells of sets should be reactive', () => {
-    const cell = Cell.source(new Set());
-    const derived = Cell.derived(() => cell.get().has(1));
-    const size = Cell.derived(() => cell.get().size);
-
-    expect(derived.get()).toBe(false);
-    expect(size.get()).toBe(0);
-
-    cell.get().add(1); // Deep reactivity test
-    expect(derived.get()).toBe(true);
-    expect(size.get()).toBe(1);
-
-    cell.get().add(2); // Deep reactivity test
-    expect(derived.get()).toBe(true);
-    expect(size.get()).toBe(2);
-  });
-
-  test('Cells of dates should be reactive', () => {
-    const cell = Cell.source(new Date());
-    const callback = vi.fn();
-    cell.listen(callback);
-
-    cell.set(new Date(2022, 1, 1));
-    expect(callback).toHaveBeenCalledTimes(1);
-    cell.set(new Date(2022, 1, 1));
-    expect(callback).toHaveBeenCalledTimes(1);
-
-    cell.get().setMonth(2);
-    expect(callback).toHaveBeenCalledTimes(2);
-  });
-
-  test('Cell should handle built-in operators on objects', () => {
-    const cell = Cell.source({ a: 1, b: 2 });
-    const derived = Cell.derived(() => cell.get().a + cell.get().b);
-
-    cell.get().a += 2;
-    expect(derived.get()).toBe(5);
-
-    cell.get().b += 2;
-    expect(derived.get()).toBe(7);
-
-    cell.get().a++;
-    expect(derived.get()).toBe(8);
-
-    cell.get().b--;
-    expect(derived.get()).toBe(7);
-  });
-
-  test('Cell should handle built-in operators on arrays', () => {
-    const cell = Cell.source([1, 2, 3]);
-    const derived = Cell.derived(() => {
-      return cell.get().map((x) => x + 5);
-    });
-
-    expect(derived.get()).toEqual([6, 7, 8]);
-
-    cell.get()[0]++;
-
-    expect(derived.get()).toEqual([7, 7, 8]);
   });
 });
 
@@ -3609,25 +3450,6 @@ describe('Effect options', () => {
 });
 
 describe('Cell options', () => {
-  test('Cells should be deeply proxied if specified', () => {
-    const cell = Cell.source({ a: 1, b: { c: 5 } }, { deep: true });
-    const callback = vi.fn();
-    cell.listen(callback);
-    cell.get().b.c = 2; // Deep reactivity test
-    expect(callback).toHaveBeenCalledTimes(1);
-  });
-
-  test('Cells should be shallowly proxied by default', () => {
-    const cell = Cell.source({ a: 1, b: { c: 5 } });
-    const callback = vi.fn();
-    cell.listen(callback);
-    cell.get().a = 2; // Deep reactivity test
-    expect(callback).toHaveBeenCalledTimes(1);
-
-    cell.get().b.c = 90; // Should not trigger update
-    expect(callback).toHaveBeenCalledTimes(1);
-  });
-
   test('Immutable cells should not allow updates', () => {
     const cell = Cell.source(1, { immutable: true });
     expect(() => {
