@@ -1050,6 +1050,7 @@ export class AsyncCell extends DerivedCell {
   #controller;
 
   /**
+   * @protected
    * Aborts the current computation if one is running.
    * @returns {void}
    */
