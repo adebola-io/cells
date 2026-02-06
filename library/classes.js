@@ -1345,10 +1345,12 @@ export class AsyncDerivedCell extends AsyncCell {
  *
  * Key features:
  * - Only executes when `runWith(input)` is called
- * - Caches concurrent calls with the same input to avoid duplicate executions
+ * - Does not deduplicate concurrent `runWith(input)` calls; each call creates
+ *   an independent execution with no caching
  * - Built-in `pending` cell for loading state (false until first execution)
  * - Built-in `error` cell for error handling
- * - Supports cancellation via AbortSignal
+ * - Supports cancellation via AbortSignal (concurrent cancellations must be
+ *   handled in the task function)
  * - Can be used with Cell.createComposite for grouping multiple tasks
  *
  * @template {*} out I - The input type of the task function.
@@ -1415,12 +1417,13 @@ export class AsyncDerivedCell extends AsyncCell {
 export class AsyncTaskCell extends AsyncCell {
   /** @param {MutatorFn<I, T>} fn */
   constructor(fn) {
-    /** @type {I | null} */
-    let currentInput = null;
+    let currentInput = /** @type {I} */ (null);
+    // currentInput may be null; hasInput indicates whether runWith has been called.
+    /** @type {boolean} */
+    let hasInput = false;
 
     const computedFn = () => {
-      if (currentInput === null)
-        return Promise.resolve(/** @type {T} */ (null));
+      if (!hasInput) return Promise.resolve(/** @type {T} */ (null));
       const capturedInput = currentInput;
       return fn(capturedInput, this._signal);
     };
@@ -1437,7 +1440,9 @@ export class AsyncTaskCell extends AsyncCell {
      * Executes the task with the provided input.
      *
      * Each call to runWith creates a new execution of the task function.
-     * If a previous execution is still running, it will be aborted.
+     * Concurrent calls are not deduplicated or cached. If you need to cancel
+     * work in progress, use the provided AbortSignal and handle it inside the
+     * task function.
      *
      * @param {I} input - The input value to pass to the task function.
      * @returns {Promise<T | null>} A promise that resolves with the task result,
@@ -1462,6 +1467,7 @@ export class AsyncTaskCell extends AsyncCell {
       const isFirstExecution = !hasExecuted;
       this.abort();
       currentInput = input;
+      hasInput = true;
       const value = this.computedFn();
       hasExecuted = true;
 
