@@ -3,239 +3,402 @@
 [![npm version](https://badge.fury.io/js/%40adbl%2Fcells.svg)](https://badge.fury.io/js/%40adbl%2Fcells)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Cells is a powerful yet lightweight library for reactive state management in JavaScript applications. It offers an intuitive API that simplifies the complexities of managing and propagating state changes throughout your application.
+A lightweight, type-safe library for reactive state management. Cells simplifies complex state propagation with an intuitive API that handles synchronous updates, asynchronous data fetching, and race conditions automatically.
+
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Guide](#guide)
+  - [Core Concepts](#1-core-concepts)
+  - [Asynchronous State](#2-asynchronous-state)
+  - [Advanced Patterns](#3-advanced-patterns)
+- [API Reference](#api-reference)
+- [TypeScript Support](#typescript-support)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Features
 
-- **Simple API**: Easy to learn and use, even for developers new to reactive programming.
-- **Lightweight**: No external dependencies, keeping your project lean.
-- **Flexible**: Works seamlessly with any JavaScript framework or vanilla JS.
-- **Type-safe**: Built with TypeScript, providing excellent type inference and checking.
-- **Performant**: Optimized for efficiency, with features like batched updates to minimize unnecessary computations.
+- **Fine-grained Reactivity** - Updates only what changes, avoiding unnecessary re-renders
+- **Async Primitives** - First-class support for async state with built-in loading and error tracking
+- **Race Condition Handling** - Automatically cancels stale async requests via `AbortSignal`
+- **Glitch-free** - Guarantees consistency across derived values with topological update ordering
+- **Type-safe** - Full TypeScript support with inferred types
+- **Zero Dependencies** - Keeps your bundle small (~3KB minified)
 
 ## Installation
-
-Get started with Cells in your project:
 
 ```bash
 npm install @adbl/cells
 ```
 
-Or if you prefer Yarn:
-
 ```bash
 yarn add @adbl/cells
 ```
 
-## Core Concepts
+```bash
+pnpm add @adbl/cells
+```
 
-### 1. Source Cells
-
-Source cells are the building blocks of your reactive state. They hold values that can change over time, automatically notifying dependents when updates occur.
+## Quick Start
 
 ```javascript
 import { Cell } from '@adbl/cells';
 
+// 1. Create a source cell
+const name = Cell.source('World');
+
+// 2. Create a derived cell (updates automatically)
+const greeting = Cell.derived(() => `Hello, ${name.get()}!`);
+
+// 3. Listen for changes
+greeting.listen((msg) => console.log(msg));
+
+// 4. Update the source
+name.set('Cells'); // Console: "Hello, Cells!"
+```
+
+---
+
+## Guide
+
+### 1. Core Concepts
+
+#### Source Cells
+
+The root of your state graph. You can read, subscribe to, and modify them.
+
+```javascript
 const count = Cell.source(0);
-console.log(count.get()); // Output: 0
+
+count.set(1);
+console.log(count.get()); // 1
+```
+
+#### Derived Cells
+
+Computed values that update automatically when dependencies change. They are eager and always kept in sync.
+
+```javascript
+const count = Cell.source(1);
+const double = Cell.derived(() => count.get() * 2);
+
+console.log(double.get()); // 2
 
 count.set(5);
-console.log(count.get()); // Output: 5
+console.log(double.get()); // 10
 ```
 
-### 2. Derived Cells
+#### Effects (`listen`)
 
-Derived cells allow you to create computed values based on other cells. They update automatically when their dependencies change, ensuring your derived state is always in sync.
-
-```javascript
-const count = Cell.source(0);
-const doubledCount = Cell.derived(() => count.get() * 2);
-
-console.log(doubledCount.get()); // Output: 0
-
-count.set(5);
-console.log(doubledCount.get()); // Output: 10
-```
-
-### 3. Reactive Effects
-
-Easily set up listeners to react to changes in cell values, allowing you to create side effects or update your UI in response to state changes.
+Run side effects when a cell changes.
 
 ```javascript
 const count = Cell.source(0);
 
-count.listen((newValue) => {
-  console.log(`Count changed to: ${newValue}`);
-});
+// Runs only on updates
+const unsubscribe = count.listen((val) => console.log(val));
 
-count.set(3); // Output: "Count changed to: 3"
-count.set(7); // Output: "Count changed to: 7"
+// Runs immediately, then on updates
+count.runAndListen((val) => console.log('Current:', val));
+
+// Cleanup when done
+unsubscribe();
 ```
 
-### 4. Batch Updates
+---
 
-When you need to perform multiple updates but only want to trigger effects once, you can use batch updates to optimize performance:
+### 2. Asynchronous State
 
-```javascript
-const cell1 = Cell.source(0);
-const cell2 = Cell.source(0);
+Cells shines when handling async operations, replacing manual promise handling with declarative primitives.
 
-const callback = () => {
-  console.log('Update occurred');
-};
+#### Async Derived Cells
 
-cell1.listen(callback);
-cell2.listen(callback);
-
-Cell.batch(() => {
-  cell1.set(1);
-  cell2.set(2);
-});
-// Output: "Update occurred" (only once)
-```
-
-### 5. Custom Equality Checks
-
-For more complex objects, you can provide custom equality functions to determine when a cell's value has truly changed:
-
-```javascript
-const userCell = Cell.source(
-  { name: 'Alice', age: 30 },
-  {
-    equals: (a, b) => a.name === b.name && a.age === b.age,
-  }
-);
-```
-
-### 6. Named Effects
-
-To aid in debugging, you can name your effects, making it easier to track and manage them:
-
-```javascript
-const count = Cell.source(0);
-
-count.listen((value) => console.log(`Count is now: ${value}`), {
-  name: 'countLogger',
-});
-
-console.log(count.isListeningTo('countLogger')); // Output: true
-
-count.stopListeningTo('countLogger');
-```
-
-## Features and API Details
-
-### Async Derived Cells
-
-While `Cell.derived` is for synchronous transformations, `Cell.derivedAsync` handles asynchronous logic like data fetching or complex computations. It behaves like its synchronous counterpart but manages the complexities of timing, errors, and cancellation.
-
-#### Key Differences from `Cell.derived`
-
-- **Computed Value**: `Cell.derived` returns a value; `Cell.derivedAsync` manages a `Promise`.
-- **Status Tracking**: Async cells provide `.pending` (loading state) and `.error` cells natively.
-- **Non-Blocking**: Updating a dependency doesn't block the UI; the cell simply enters a `pending` state while it works in the background.
-
-#### Usage
+Use `Cell.derivedAsync` for data fetching or heavy computations. It automatically exposes `pending` and `error` states.
 
 ```javascript
 const userId = Cell.source(1);
 
-const profile = Cell.derivedAsync(async (get, signal) => {
-  const id = get(userId); // Automatically tracks userId
-  const response = await fetch(`/api/users/${id}`, { signal });
-  return response.json();
+const user = Cell.derivedAsync(async (get, signal) => {
+  // 'get' tracks dependencies
+  const id = get(userId);
+
+  // 'signal' handles cancellation automatically if userId changes
+  const res = await fetch(`/api/users/${id}`, { signal });
+  return res.json();
 });
 
-// Reacting to the state
-profile.pending.listen((loading) =>
-  console.log(loading ? 'Loading...' : 'Ready')
-);
-profile.error.listen((err) => err && console.error('Fetch failed:', err));
+// Built-in status tracking
+user.pending.listen((isLoading) => console.log(isLoading ? 'Loading...' : 'Done'));
+user.error.listen((err) => err && console.error(err));
 
-// Getting the value:
-const data = await profile.get();
+// Access the data
+const data = await user.get();
 ```
 
-#### Behavior
+#### Task Cells
 
-- **Orchestration**: If a dependency is another async cell, calling `await get(dependency)` ensures the library waits for the parent to finish before starting the current computation.
-- **Cancellation**: If dependencies change while a computation is in-flight, the provided `signal` is aborted and the computation is restarted with fresh inputs.
-- **Consistency**: The library performs a deep equality check on results. If a parent finishes but its value hasn't changed, dependent children will not re-run.
-- **Resilience**: If a computation fails, the `error` cell is updated, but `get()` continues to provide the last successful value to keep the UI stable.
-
-#### Composition (Chaining)
-
-Multiple async cells can be chained together. The library handles the synchronization between them automatically.
+Use `Cell.task` for user-triggered actions (e.g., form submissions). Unlike derived cells, these only execute when triggered with `runWith`.
 
 ```javascript
-const posts = Cell.derivedAsync(async (get, signal) => {
-  // Wait for the 'profile' cell to resolve first
-  const userData = await get(profile);
-  const response = await fetch(`/api/posts?email=${userData.email}`, {
+const login = Cell.task(async (creds, signal) => {
+  const res = await fetch('/api/login', {
+    method: 'POST',
+    body: JSON.stringify(creds),
     signal,
   });
-  return response.json();
+  return res.json();
+});
+
+// Trigger the task
+const result = await login.runWith({ user: 'admin', pass: '1234' });
+
+// Track status
+login.pending.listen((isPending) => {
+  submitButton.disabled = isPending;
 });
 ```
 
-#### API Summary
+#### Composite Cells
 
-- **`pending`**: `Cell<boolean>` - `true` during active computation.
-- **`error`**: `Cell<Error | null>` - The last error encountered.
-- **`get()`**: Returns a `Promise` that resolves to the current value once the cell (and its ancestors) are stable.
-- **`peek()`**: Same as `get()`, but does not register the cell as a dependency of the caller.
-- **`revalidate()`**: Manually triggers a recomputation of the async cell, aborting any in-flight computation.
-
-#### Callback Signature
-
-The callback receives two parameters:
-
-- `get(cell)`: Reads a cell's value and tracks it as a dependency. If the target is an async cell, it returns a `Promise`.
-- `signal`: An `AbortSignal` that triggers when the computation becomes obsolete (e.g., a dependency changed).
-
-### Cell Options
-
-When creating a source cell, you have fine-grained control over its behavior:
+Group multiple async cells into a synchronized unit. Useful for preventing partial updates or ensuring "all-or-nothing" behavior.
 
 ```javascript
-const cell = Cell.source(initialValue, {
-  immutable: boolean, // If true, the cell will not allow updates
-  equals: (oldValue, newValue) => boolean, // Custom equality function
+const profile = Cell.derivedAsync(fetchProfile);
+const posts = Cell.derivedAsync(fetchPosts);
+
+// Waits for BOTH to finish before updating
+const dashboard = Cell.composite({ profile, posts });
+
+dashboard.pending.listen((isPending) => showSpinner(isPending));
+dashboard.error.listen((err) => err && showError(err));
+
+dashboard.loaded.listen(async (ready) => {
+  if (ready) {
+    const profileData = await dashboard.values.profile.get();
+    const postsData = await dashboard.values.posts.get();
+    renderDashboard(profileData, postsData);
+  }
 });
 ```
 
-### Effect Options
+---
 
-When setting up listeners or effects, you can customize their behavior:
+### 3. Advanced Patterns
+
+#### Batch Updates
+
+Group multiple updates into a single notification to avoid unnecessary re-computations.
 
 ```javascript
-cell.listen(callback, {
-  once: boolean, // If true, the effect will only run once
-  signal: AbortSignal, // An AbortSignal to cancel the effect
-  name: string, // A name for the effect (useful for debugging)
-  priority: number, // The priority of the effect (higher priority effects run first)
+Cell.batch(() => {
+  firstName.set('John');
+  lastName.set('Doe');
+  // Effects run once here, after the block finishes
 });
 ```
 
-### Explicit Disposal (Contexts)
+#### Peeking
 
-By default, Cells uses `WeakRef` and Garbage Collection to manage memory. This is easy to use but can lead to "ghost computations", where listeners and derived cells keep running for a short time after they are no longer needed.
+Read a value *without* subscribing to it.
 
-For high-performance scenarios, you can use a `LocalContext` to group dependencies and kill them synchronously.
+```javascript
+const sum = Cell.derived(() => {
+  // Re-runs if 'a' changes, but NOT if 'b' changes
+  return a.get() + b.peek();
+});
+```
+
+#### Custom Equality
+
+Customize how cells detect changes.
+
+```javascript
+const user = Cell.source(
+  { id: 1, name: 'Alice' },
+  {
+    equals: (a, b) => a.id === b.id, // Only update if ID changes
+  }
+);
+```
+
+#### Memory Management (Contexts)
+
+For high-performance scenarios involving many dynamically created cells, use `LocalContext` for manual disposal.
 
 ```javascript
 const ctx = Cell.context();
-const source = Cell.source(1);
 
 Cell.runWithContext(ctx, () => {
-  // This listener is now bound to 'ctx' (Strong Reference)
-  source.listen((val) => console.log(val));
+  // All listeners and derived cells created here are bound to 'ctx'
+  source.listen(handler);
+  const derived = Cell.derived(() => source.get() * 2);
 });
 
-source.set(2); // Logs: 2
-
-// Synchronously remove all listeners created in that block
+// Clean up everything at once
 ctx.destroy();
-
-source.set(3); // Nothing happens
 ```
+
+---
+
+## API Reference
+
+### `Cell` Static Methods
+
+| Method | Description |
+|--------|-------------|
+| `source(value, options?)` | Creates a mutable source cell. |
+| `derived(fn)` | Creates a computed cell from other cells. |
+| `derivedAsync(fn)` | Creates an async computed cell with cancellation support. |
+| `task(fn)` | Creates a triggerable async task. |
+| `composite(map)` | Combines multiple cells into a synchronized object. |
+| `batch(fn)` | Batches updates to prevent multiple effect triggers. |
+| `context()` | Creates a new `LocalContext` for scoped memory management. |
+| `runWithContext(ctx, fn)` | Executes a function within a specific `LocalContext`. |
+| `isCell(value)` | Returns `true` if the value is a Cell. |
+
+### Cell Instance Methods
+
+| Method | Description |
+|--------|-------------|
+| `get()` | Returns the value. Registers dependency if in a derivation. |
+| `peek()` | Returns the value without registering a dependency. |
+| `listen(callback, options?)` | Subscribes to changes. Returns an unsubscribe function. |
+| `runAndListen(callback, options?)` | Runs callback immediately, then subscribes to future changes. |
+| `ignore(callback)` | Removes a previously registered listener. |
+| `valueOf()` | Returns the raw value (for implicit coercion). |
+| `toString()` | Returns the stringified value. |
+
+### `SourceCell` Methods
+
+| Method | Description |
+|--------|-------------|
+| `set(value)` | Updates the cell's value and notifies listeners. |
+
+### `AsyncCell` Properties and Methods
+
+Available on `AsyncDerivedCell` and `AsyncTaskCell`:
+
+| Property/Method | Description |
+|-----------------|-------------|
+| `pending` | A `Cell<boolean>` indicating loading state. |
+| `error` | A `Cell<Error \| null>` holding the last error. |
+| `get()` | Returns a `Promise` that resolves to the value. |
+| `peek()` | Returns a `Promise` without registering dependencies. |
+
+### `AsyncDerivedCell` Methods
+
+| Method | Description |
+|--------|-------------|
+| `revalidate()` | Forces a refresh of the async computation. |
+
+### `AsyncTaskCell` Methods
+
+| Method | Description |
+|--------|-------------|
+| `runWith(input)` | Executes the task with the given input. Returns a `Promise`. |
+
+### `Composite` Object
+
+Returned by `Cell.composite()`:
+
+| Property | Description |
+|----------|-------------|
+| `values` | Object containing synchronized async cells for each input key. |
+| `pending` | A `Cell<boolean>` that is `true` while any input is pending. |
+| `error` | A `Cell<Error \| null>` with the first error from any input. |
+| `loaded` | A `Cell<boolean>` that becomes `true` after initial load completes. |
+
+### `LocalContext` Methods
+
+| Method | Description |
+|--------|-------------|
+| `destroy()` | Disposes all listeners and derived cells bound to this context. |
+
+### Effect Options
+
+Options for `listen()` and `runAndListen()`:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `once` | `boolean` | Remove the listener after it fires once. |
+| `signal` | `AbortSignal` | Automatically remove listener when signal aborts. |
+| `weak` | `boolean` | Use a weak reference (listener may be garbage collected). |
+| `priority` | `number` | Execution order (higher runs first, default: 0). |
+
+### Cell Options
+
+Options for `Cell.source()`:
+
+| Option | Type | Description |
+|--------|------|-------------|
+| `equals` | `(a, b) => boolean` | Custom equality function for change detection. |
+
+---
+
+## TypeScript Support
+
+Cells is written in JavaScript with comprehensive JSDoc annotations and ships with TypeScript declaration files.
+
+```typescript
+import { Cell, SourceCell, DerivedCell, AsyncDerivedCell } from '@adbl/cells';
+
+// Types are inferred automatically
+const count: SourceCell<number> = Cell.source(0);
+const doubled: DerivedCell<number> = Cell.derived(() => count.get() * 2);
+
+// Async cells with proper typing
+const user: AsyncDerivedCell<User> = Cell.derivedAsync(async (get) => {
+  const id = get(userId);
+  const res = await fetch(`/api/users/${id}`);
+  return res.json() as User;
+});
+
+// Task cells with input/output types
+const submitForm = Cell.task(async (data: FormData, signal: AbortSignal) => {
+  const res = await fetch('/api/submit', { method: 'POST', body: data, signal });
+  return res.json() as SubmitResult;
+});
+```
+
+---
+
+## Contributing
+
+Contributions are welcome! Here's how to get started:
+
+### Development Setup
+
+```bash
+# Clone the repository
+git clone https://github.com/adebola-io/signals.git
+cd signals
+
+# Install dependencies
+npm install
+
+# Run tests in watch mode
+npm test
+
+# Run tests once
+npm run test-once
+
+# Build the project
+npm run build
+```
+
+### Running Tests
+
+```bash
+npm test
+```
+
+The test suite uses [Vitest](https://vitest.dev/) and covers all core functionality including async behavior and race conditions.
+
+---
+
+## License
+
+MIT © [Sefunmi Adebola Akomolafe](https://github.com/adebola-io)

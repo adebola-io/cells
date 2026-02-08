@@ -15,6 +15,7 @@
  *    CellData[key] extends Cell<infer X> ? AsyncDerivedCell<X> : never }} values
  * @property {Cell<boolean>} pending
  * @property {Cell<Error | null>} error
+ * @property {Cell<boolean>} loaded Whether the composite has completed its initial load.
  */
 
 /**
@@ -23,8 +24,6 @@
  * Whether the effect should be removed after the first run.
  * @property {AbortSignal} [signal]
  * An AbortSignal to be used to ignore the effect if it is aborted.
- * @property {string} [name]
- * The name of the effect for debugging purposes.
  * @property {boolean} [weak]
  * Whether the effect should be weakly referenced. This means that the effect will be garbage collected if there are no other references to it.
  * @property {number} [priority]
@@ -34,8 +33,6 @@
 /**
  * @template T
  * @typedef {object} CellOptions
- * @property {boolean} [immutable]
- * Whether the cell should be immutable. If set to true, the cell will not allow updates and will throw an error if the value is changed.
  * @property {(oldValue: T, newValue: T) => boolean} [equals]
  * A function that determines whether two values are equal. If not provided, the default equality function will be used.
  */
@@ -224,7 +221,7 @@ function throwAnyErrors() {
   }
 }
 
-/** @template T */
+/** @template {*} out T */
 class Effect {
   /**
    * @type {EffectOptions | undefined}
@@ -276,8 +273,7 @@ export class LocalContext {
       for (const source of sources) {
         source.derivations.delete(derivation);
       }
-      if (derivation instanceof AsyncDerivedCell)
-        derivation[DisposeAsyncCell]();
+      if (derivation instanceof AsyncCell) derivation[DisposeAsyncCell]();
     }
 
     for (const [cell, effects] of this.effects) {
@@ -454,12 +450,6 @@ export class Cell {
       };
     }
 
-    if (options?.name && this.isListeningTo(options.name)) {
-      throw new Error(
-        `An effect with the name "${options.name}" is already listening to this cell.`,
-      );
-    }
-
     const isAlreadySubscribed = this.#effects.some((effect) => {
       return effect.callback === callback;
     });
@@ -509,11 +499,6 @@ export class Cell {
 
     if (options?.once) return () => this.ignore(cb);
 
-    if (options?.name && this.isListeningTo(options.name)) {
-      const message = `An effect with the name "${options.name}" is already listening to this cell.`;
-      throw new Error(message);
-    }
-
     const isAlreadySubscribed = this.#effects.some((e) => {
       return e.callback === callback;
     });
@@ -547,30 +532,6 @@ export class Cell {
     if (index === -1) return;
 
     this.#effects.splice(index, 1);
-  }
-
-  /**
-   * Checks if the cell is listening to a watcher with the specified name.
-   * @param {string} name - The name of the watcher to check for.
-   * @returns {boolean} `true` if the cell is listening to a watcher with the specified name, `false` otherwise.
-   */
-  isListeningTo(name) {
-    return this.#effects.some((effect) => {
-      return effect?.options?.name === name && effect.callback;
-    });
-  }
-
-  /**
-   * Removes the watcher with the specified name from the list of effects for this cell.
-   * @param {string} name - The name of the watcher to stop listening to.
-   */
-  stopListeningTo(name) {
-    const effectIndex = this.#effects.findIndex((e) => {
-      return e.options?.name === name;
-    });
-    if (effectIndex === -1) return;
-
-    this.#effects.splice(effectIndex, 1);
   }
 
   /**
@@ -701,6 +662,70 @@ export class Cell {
   static derivedAsync = (callback) => new AsyncDerivedCell(callback);
 
   /**
+   * Creates a new AsyncTaskCell that represents a one-time asynchronous computation.
+   * Unlike derivedAsync which re-computes automatically when dependencies change,
+   * a task only executes when explicitly called via `runWith(input)`.
+   *
+   * Tasks are ideal for:
+   * - Form submissions
+   * - One-time API calls
+   * - User-triggered actions
+   * - Operations that should not auto-execute
+   *
+   * @template Input, Output
+   * @param {(input: Input, signal: AbortSignal) => Promise<Output>} fn - An async function that performs the task.
+   *   - `input`: The input value passed when calling `runWith(input)`.
+   *   - `signal`: An AbortSignal that is aborted when a new execution starts,
+   *     useful for cancelling in-flight requests.
+   * @returns {AsyncTaskCell<Input, Output>} A new AsyncTaskCell instance.
+   *
+   * @example
+   * ```javascript
+   * // Create a task for submitting form data
+   * const submitTask = Cell.task(async (formData, signal) => {
+   *   const response = await fetch('/api/submit', {
+   *     method: 'POST',
+   *     body: formData,
+   *     signal
+   *   });
+   *   return response.json();
+   * });
+   *
+   * // Execute the task
+   * const result = await submitTask.runWith({ name: 'John' });
+   *
+   * // Access loading and error states
+   * submitTask.pending.listen((isPending) => {
+   *   console.log('Submitting:', isPending);
+   * });
+   *
+   * submitTask.error.listen((err) => {
+   *   if (err) console.error('Submission failed:', err);
+   * });
+   * ```
+   *
+   * @example
+   * ```javascript
+   * // Tasks can be used with Cell.composite for managing multiple operations
+   * const uploadTask = Cell.task(async (file) => {
+   *   // Upload logic
+   * });
+   *
+   * const deleteTask = Cell.task(async (id) => {
+   *   // Delete logic
+   * });
+   *
+   * const operations = Cell.composite({ upload: uploadTask, delete: deleteTask });
+   *
+   * // Track overall pending state
+   * operations.pending.listen((isPending) => {
+   *   console.log('Operations in progress:', isPending);
+   * });
+   * ```
+   */
+  static task = (fn) => new AsyncTaskCell(fn);
+
+  /**
    * Joins multiple cells into a single “all-or-nothing” async unit.
    *
    * Each returned property only produces a new value after **every** input cell
@@ -721,31 +746,34 @@ export class Cell {
    * const user = Cell.derivedAsync(async (get) => fetchUser(get(id)));
    * const notifications = Cell.derivedAsync(async (get) => fetchNotifs(get(id)));
    *
-   * const group = Cell.createComposite({ user, notifications });
+   * const group = Cell.composite({ user, notifications });
    *
    * group.pending.listen(showSpinner);
    * group.error.listen(showError);
+   * group.loaded.listen((isLoaded) => isLoaded && hideInitialSkeleton());
    *
    * const u = await group.values.user.get();
    * const n = await group.values.notifications.get();
    */
-  static createComposite = (input) => {
+  static composite = (input) => {
     const output = /** @type {Composite<CellData>['values']} */ ({});
     const error = Cell.derived(() => {
       return (
         Object.values(input)
-          .map((cell) =>
-            cell instanceof AsyncDerivedCell ? cell.error.get() : null,
-          )
+          .map((cell) => (cell instanceof AsyncCell ? cell.error.get() : null))
           .find(Boolean) || null
       );
     });
     const pending = Cell.derived(() => {
       return Object.values(input)
-        .map((cell) =>
-          cell instanceof AsyncDerivedCell ? cell.pending.get() : false,
-        )
+        .map((cell) => (cell instanceof AsyncCell ? cell.pending.get() : false))
         .some(Boolean);
+    });
+    const loaded = Cell.source(!pending.peek());
+    pending.listen((isPending) => {
+      if (!isPending && !loaded.peek()) {
+        loaded.set(true);
+      }
     });
     const barrier = Cell.derivedAsync((get) => {
       return Promise.all(Object.values(input).map(get));
@@ -764,7 +792,7 @@ export class Cell {
       return output;
     }, output);
 
-    return { values, pending, error };
+    return { values, pending, error, loaded };
   };
   /**
    * Executes a function within a specific LocalContext.
@@ -918,14 +946,6 @@ export class DerivedCell extends Cell {
  * ```typescript
  * const count = Cell.source(0);
  * ```
- *
- * @example
- * ```typescript
- * // With options
- * const immutableCell = Cell.source(42, { immutable: true });
- * // Will throw error:
- * immutableCell.set(43);
- * ```
  */
 export class SourceCell extends Cell {
   /**
@@ -958,10 +978,6 @@ export class SourceCell extends Cell {
    * @param {T} value
    */
   set(value) {
-    if (this.options?.immutable) {
-      throw new Error('Cannot set the value of an immutable cell.');
-    }
-
     const oldValue = this.wvalue;
     const isEqual = this.options?.equals
       ? this.options.equals(oldValue, value)
@@ -977,53 +993,39 @@ export class SourceCell extends Cell {
 }
 
 /**
- * A derived cell that computes its value asynchronously.
- *
- * AsyncDerivedCell extends the reactive paradigm to asynchronous operations,
- * automatically re-running the async computation when dependencies change.
- * It provides built-in state management for loading and error states.
- *
- * Key features:
- * - Automatic dependency tracking via the `get` function
- * - Automatic cancellation of in-flight operations when dependencies change
- * - Built-in `pending` cell for loading state
- * - Built-in `error` cell for error handling
- * - Race condition prevention through AbortSignal
- *
  * @template {*} out T - The type of the resolved async value.
- * @extends {DerivedCell<Promise<T | null>>}
- *
- * @example
- * ```javascript
- * const searchQuery = Cell.source('');
- *
- * const searchResults = Cell.derivedAsync(async (get, signal) => {
- *   const query = get(searchQuery);
- *   if (!query) return [];
- *
- *   const response = await fetch(`/api/search?q=${query}`, { signal });
- *   return response.json();
- * });
- *
- * // React to state changes
- * searchResults.pending.listen((loading) => {
- *   showSpinner(loading);
- * });
- *
- * searchResults.error.listen((error) => {
- *   if (error) showError(error.message);
- * });
- * ```
+ * @extends {DerivedCell<Promise<T>>}
  */
-export class AsyncDerivedCell extends DerivedCell {
+export class AsyncCell extends DerivedCell {
   /** @type {Set<Promise<any>>} */
   #upstream = new Set();
-  /** @type {Set<AsyncDerivedCell<any>>} */
+  /** @type {Set<AsyncCell<any>>} */
   #consumed = new Set();
   /** @type {undefined | (() => void)} */
   #abandonLastComputation;
-  /** @type {AbortController} */ //@ts-expect-error: not definitively assigned.
+  /** @type {AbortController | undefined} */
   #controller;
+
+  /**
+   * @protected
+   * Aborts the current computation if one is running.
+   * @returns {void}
+   */
+  abort() {
+    this.#controller?.abort();
+  }
+
+  /**
+   * Gets the AbortSignal for the current computation.
+   * @protected
+   * @returns {AbortSignal}
+   */
+  get _signal() {
+    if (!this.#controller) {
+      this.#controller = new AbortController();
+    }
+    return this.#controller.signal;
+  }
 
   /**
    * A cell that indicates whether the async computation is currently running.
@@ -1042,8 +1044,7 @@ export class AsyncDerivedCell extends DerivedCell {
    * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => Promise<T>} fn
    */
   constructor(fn) {
-    /** @type {Promise<T | null>} */
-    const initialState = Promise.resolve(null);
+    const initialState = /** @type {Promise<T>} */ (Promise.resolve(null));
     super(() => initialState);
     let lastStablePromise = initialState;
     /** @type [this, number] */
@@ -1058,7 +1059,7 @@ export class AsyncDerivedCell extends DerivedCell {
     const get = (cell) => {
       ACTIVE_DERIVED_CTX.push(derivedCtx);
       const value = cell.get();
-      if (cell instanceof AsyncDerivedCell && value instanceof Promise) {
+      if (cell instanceof AsyncCell && value instanceof Promise) {
         const currentRunId = runId;
         value.then(() => {
           if (runId === currentRunId) this.#consumed.add(cell);
@@ -1102,7 +1103,7 @@ export class AsyncDerivedCell extends DerivedCell {
 
       const current = Promise.race([
         tripwire,
-        new Promise((resolve) => resolve(fn(get, this.#controller.signal))),
+        new Promise((resolve) => resolve(fn(get, this._signal))),
       ])
         .catch((error) => {
           if (currentRunId === runId) {
@@ -1202,7 +1203,7 @@ export class AsyncDerivedCell extends DerivedCell {
 
   /**
    * Returns the current value of the async cell.
-   * @returns {Promise<T | null>}
+   * @returns {Promise<T>}
    */
   async get() {
     super.get(); // Forces a dependency registration in sync time.
@@ -1222,7 +1223,7 @@ export class AsyncDerivedCell extends DerivedCell {
    * Returns the current value of the async cell without registering dependencies.
    * Like get(), this waits for upstream promises and pending state to resolve,
    * but it does not register this cell as a dependency of the calling context.
-   * @returns {Promise<T | null>} A promise that resolves to the current value.
+   * @returns {Promise<T>} A promise that resolves to the current value.
    */
   async peek() {
     while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
@@ -1234,7 +1235,48 @@ export class AsyncDerivedCell extends DerivedCell {
       }
     });
   }
+}
 
+/**
+ * A derived cell that computes its value asynchronously.
+ *
+ * AsyncDerivedCell extends the reactive paradigm to asynchronous operations,
+ * automatically re-running the async computation when dependencies change.
+ * It provides built-in state management for loading and error states.
+ *
+ * Key features:
+ * - Automatic dependency tracking via the `get` function
+ * - Automatic cancellation of in-flight operations when dependencies change
+ * - Built-in `pending` cell for loading state
+ * - Built-in `error` cell for error handling
+ * - Race condition prevention through AbortSignal
+ *
+ * @template {*} out T - The type of the resolved async value.
+ * @extends {AsyncCell<T>}
+ *
+ * @example
+ * ```javascript
+ * const searchQuery = Cell.source('');
+ *
+ * const searchResults = Cell.derivedAsync(async (get, signal) => {
+ *   const query = get(searchQuery);
+ *   if (!query) return [];
+ *
+ *   const response = await fetch(`/api/search?q=${query}`, { signal });
+ *   return response.json();
+ * });
+ *
+ * // React to state changes
+ * searchResults.pending.listen((loading) => {
+ *   showSpinner(loading);
+ * });
+ *
+ * searchResults.error.listen((error) => {
+ *   if (error) showError(error.message);
+ * });
+ * ```
+ */
+export class AsyncDerivedCell extends AsyncCell {
   /**
    * Revalidates the async cell by recomputing its value.
    * This will abort any in-flight computation and start a new one.
@@ -1242,6 +1284,168 @@ export class AsyncDerivedCell extends DerivedCell {
    */
   revalidate() {
     this.computedFn();
+  }
+}
+
+/**
+ * @template I, O
+ * @typedef {(input: I, signal: AbortSignal) => Promise<O>} MutatorFn
+ */
+
+/**
+ * A task cell that performs one-time asynchronous computations.
+ *
+ * AsyncTaskCell is designed for operations that should only execute when explicitly
+ * triggered, unlike AsyncDerivedCell which re-computes automatically. This makes it
+ * ideal for form submissions, button actions, or any user-triggered operations.
+ *
+ * Key features:
+ * - Only executes when `runWith(input)` is called
+ * - Does not deduplicate concurrent `runWith(input)` calls; each call creates
+ *   an independent execution with no caching
+ * - Built-in `pending` cell for loading state (false until first execution)
+ * - Built-in `error` cell for error handling
+ * - Supports cancellation via AbortSignal (concurrent cancellations must be
+ *   handled in the task function)
+ * - Can be used with Cell.composite for grouping multiple tasks
+ *
+ * @template {*} out I - The input type of the task function.
+ * @template {*} out T - The type of the resolved async value.
+ * @extends {AsyncCell<T>}
+ *
+ * @example
+ * ```javascript
+ * import { Cell } from '@adbl/cells';
+ *
+ * // Create a task for user login
+ * const loginTask = Cell.task(async (credentials, signal) => {
+ *   const response = await fetch('/api/login', {
+ *     method: 'POST',
+ *     headers: { 'Content-Type': 'application/json' },
+ *     body: JSON.stringify(credentials),
+ *     signal
+ *   });
+ *
+ *   if (!response.ok) {
+ *     throw new Error('Login failed');
+ *   }
+ *
+ *   return response.json();
+ * });
+ *
+ * // Execute the task
+ * loginTask.runWith({ username: 'john', password: 'secret' });
+ *
+ * // Monitor states
+ * loginTask.pending.listen((isPending) => {
+ *   submitButton.disabled = isPending;
+ *   submitButton.textContent = isPending ? 'Logging in...' : 'Login';
+ * });
+ *
+ * loginTask.error.listen((error) => {
+ *   if (error) {
+ *     errorMessage.textContent = error.message;
+ *   }
+ * });
+ *
+ * loginTask.listen(async (promise) => {
+ *   const user = await promise;
+ *   console.log('Logged in as:', user.name);
+ * });
+ * ```
+ *
+ * @example
+ * ```javascript
+ * const fetchTask = Cell.task(async (id) => {
+ *   console.log('Fetching user', id);
+ *   await delay(1000);
+ *   return { id, name: 'User ' + id };
+ * });
+ *
+ * // Execute the task
+ * const user = await fetchTask.runWith(1);
+ * console.log(user.name);
+ *
+ * // Execute again - each call creates a new execution
+ * const anotherUser = await fetchTask.runWith(2);
+ * ```
+ */
+export class AsyncTaskCell extends AsyncCell {
+  /** @param {MutatorFn<I, T>} fn */
+  constructor(fn) {
+    let currentInput = /** @type {I} */ (null);
+    // currentInput may be null; hasInput indicates whether runWith has been called.
+    /** @type {boolean} */
+    let hasInput = false;
+
+    const computedFn = () => {
+      if (!hasInput) return Promise.resolve(/** @type {T} */ (null));
+      const capturedInput = currentInput;
+      return fn(capturedInput, this._signal);
+    };
+
+    super(computedFn);
+
+    // AsyncTaskCell should not be pending until runWith is called
+    this.pending.set(false);
+
+    let hasExecuted = false;
+    this.update = this.update.bind(this);
+
+    /**
+     * Executes the task with the provided input.
+     *
+     * Each call to runWith creates a new execution of the task function.
+     * Concurrent calls are not deduplicated or cached. If you need to cancel
+     * work in progress, use the provided AbortSignal and handle it inside the
+     * task function.
+     *
+     * @param {I} input - The input value to pass to the task function.
+     * @returns {Promise<T | null>} A promise that resolves with the task result,
+     *   or null if the task hasn't been executed yet.
+     *
+     * @example
+     * ```javascript
+     * const task = Cell.task(async (userId) => {
+     *   const response = await fetch(`/api/users/${userId}`);
+     *   return response.json();
+     * });
+     *
+     * // Execute the task
+     * const user = await task.runWith(123);
+     * console.log(user.name);
+     *
+     * // Execute again with different input
+     * const anotherUser = await task.runWith(456);
+     * ```
+     */
+    this.runWith = async (input) => {
+      const isFirstExecution = !hasExecuted;
+      this.abort();
+      currentInput = input;
+      hasInput = true;
+      const value = this.computedFn();
+      hasExecuted = true;
+
+      // For the first execution, we need to manually trigger an update
+      // since AsyncCell skips update() for the initial state.
+      // We also need to schedule AsyncDerivedCell children for recomputation.
+      if (isFirstExecution) {
+        value.then(() => {
+          this.update();
+          // Schedule AsyncDerivedCell children for recomputation
+          for (const child of this.derivations) {
+            if (child instanceof AsyncDerivedCell && !child[IsScheduled]) {
+              UPDATE_BUFFER.push(child);
+              child[IsScheduled] = true;
+            }
+          }
+          if (!IS_UPDATING) triggerUpdate();
+        });
+      }
+
+      return value;
+    };
   }
 }
 
