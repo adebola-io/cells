@@ -42,11 +42,6 @@ yarn add @adbl/cells
 pnpm add @adbl/cells
 ```
 
-### Requirements
-
-- ES2020+ environment (browsers, Node.js 14+, Deno, Bun)
-- TypeScript 4.5+ (optional, for type definitions)
-
 ## Quick Start
 
 ```javascript
@@ -180,7 +175,7 @@ const dashboard = Cell.composite({ profile, posts });
 dashboard.pending.listen((isPending) => showSpinner(isPending));
 dashboard.error.listen((err) => err && showError(err));
 
-dashboard.loaded.listen((ready) => {
+dashboard.loaded.listen(async (ready) => {
   if (ready) {
     const profileData = await dashboard.values.profile.get();
     const postsData = await dashboard.values.posts.get();
