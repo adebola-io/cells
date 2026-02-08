@@ -193,6 +193,47 @@ The callback receives two parameters:
 - `get(cell)`: Reads a cell's value and tracks it as a dependency. If the target is an async cell, it returns a `Promise`.
 - `signal`: An `AbortSignal` that triggers when the computation becomes obsolete (e.g., a dependency changed).
 
+### Composite Cells
+
+When you have multiple async cells that should be treated as a single unit, use `Cell.composite()`. This ensures all cells settle together before any values are read, preventing partial updates.
+
+```javascript
+const productId = Cell.source('sku-123');
+
+const details = Cell.derivedAsync(async (get, signal) => {
+  const res = await fetch(`/api/products/${get(productId)}`, { signal });
+  return res.json();
+});
+
+const reviews = Cell.derivedAsync(async (get, signal) => {
+  const res = await fetch(`/api/products/${get(productId)}/reviews`, { signal });
+  return res.json();
+});
+
+const product = Cell.composite({ details, reviews });
+
+// Show skeleton only on initial load
+product.loaded.listen((ready) => {
+  document.getElementById('skeleton').hidden = ready;
+});
+
+// Show inline spinner during reloads
+product.pending.listen((loading) => {
+  document.getElementById('refresh-spinner').hidden = !loading;
+});
+
+// Both values update atomically - no partial renders
+product.values.details.listen((d) => renderDetails(d));
+product.values.reviews.listen((r) => renderReviews(r));
+```
+
+#### API Summary
+
+- **`values`**: An object with the same keys as the input, each containing an async cell that waits for all inputs to settle.
+- **`pending`**: `Cell<boolean>` - `true` if any input cell is currently pending.
+- **`error`**: `Cell<Error | null>` - The first error from any input cell, or `null`.
+- **`loaded`**: `Cell<boolean>` - `false` initially, becomes `true` after the first successful load. Remains `true` during subsequent reloads, making it ideal for hiding initial loading skeletons.
+
 ### Cell Options
 
 When creating a source cell, you have fine-grained control over its behavior:

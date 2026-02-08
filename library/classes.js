@@ -15,6 +15,7 @@
  *    CellData[key] extends Cell<infer X> ? AsyncDerivedCell<X> : never }} values
  * @property {Cell<boolean>} pending
  * @property {Cell<Error | null>} error
+ * @property {Cell<boolean>} loaded Whether the composite has completed its initial load.
  */
 
 /**
@@ -224,7 +225,7 @@ function throwAnyErrors() {
   }
 }
 
-/** @template T */
+/** @template {*} out T */
 class Effect {
   /**
    * @type {EffectOptions | undefined}
@@ -744,7 +745,7 @@ export class Cell {
    *
    * @example
    * ```javascript
-   * // Tasks can be used with Cell.createComposite for managing multiple operations
+   * // Tasks can be used with Cell.composite for managing multiple operations
    * const uploadTask = Cell.task(async (file) => {
    *   // Upload logic
    * });
@@ -753,7 +754,7 @@ export class Cell {
    *   // Delete logic
    * });
    *
-   * const operations = Cell.createComposite({ upload: uploadTask, delete: deleteTask });
+   * const operations = Cell.composite({ upload: uploadTask, delete: deleteTask });
    *
    * // Track overall pending state
    * operations.pending.listen((isPending) => {
@@ -784,15 +785,16 @@ export class Cell {
    * const user = Cell.derivedAsync(async (get) => fetchUser(get(id)));
    * const notifications = Cell.derivedAsync(async (get) => fetchNotifs(get(id)));
    *
-   * const group = Cell.createComposite({ user, notifications });
+   * const group = Cell.composite({ user, notifications });
    *
    * group.pending.listen(showSpinner);
    * group.error.listen(showError);
+   * group.loaded.listen((isLoaded) => isLoaded && hideInitialSkeleton());
    *
    * const u = await group.values.user.get();
    * const n = await group.values.notifications.get();
    */
-  static createComposite = (input) => {
+  static composite = (input) => {
     const output = /** @type {Composite<CellData>['values']} */ ({});
     const error = Cell.derived(() => {
       return (
@@ -805,6 +807,12 @@ export class Cell {
       return Object.values(input)
         .map((cell) => (cell instanceof AsyncCell ? cell.pending.get() : false))
         .some(Boolean);
+    });
+    const loaded = Cell.source(!pending.peek());
+    pending.listen((isPending) => {
+      if (!isPending && !loaded.peek()) {
+        loaded.set(true);
+      }
     });
     const barrier = Cell.derivedAsync((get) => {
       return Promise.all(Object.values(input).map(get));
@@ -823,7 +831,7 @@ export class Cell {
       return output;
     }, output);
 
-    return { values, pending, error };
+    return { values, pending, error, loaded };
   };
   /**
    * Executes a function within a specific LocalContext.
@@ -1037,7 +1045,7 @@ export class SourceCell extends Cell {
 
 /**
  * @template {*} out T - The type of the resolved async value.
- * @extends {DerivedCell<Promise<T | null>>}
+ * @extends {DerivedCell<Promise<T>>}
  */
 export class AsyncCell extends DerivedCell {
   /** @type {Set<Promise<any>>} */
@@ -1087,8 +1095,7 @@ export class AsyncCell extends DerivedCell {
    * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => Promise<T>} fn
    */
   constructor(fn) {
-    /** @type {Promise<T | null>} */
-    const initialState = Promise.resolve(null);
+    const initialState = /** @type {Promise<T>} */ (Promise.resolve(null));
     super(() => initialState);
     let lastStablePromise = initialState;
     /** @type [this, number] */
@@ -1247,7 +1254,7 @@ export class AsyncCell extends DerivedCell {
 
   /**
    * Returns the current value of the async cell.
-   * @returns {Promise<T | null>}
+   * @returns {Promise<T>}
    */
   async get() {
     super.get(); // Forces a dependency registration in sync time.
@@ -1267,7 +1274,7 @@ export class AsyncCell extends DerivedCell {
    * Returns the current value of the async cell without registering dependencies.
    * Like get(), this waits for upstream promises and pending state to resolve,
    * but it does not register this cell as a dependency of the calling context.
-   * @returns {Promise<T | null>} A promise that resolves to the current value.
+   * @returns {Promise<T>} A promise that resolves to the current value.
    */
   async peek() {
     while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
@@ -1351,7 +1358,7 @@ export class AsyncDerivedCell extends AsyncCell {
  * - Built-in `error` cell for error handling
  * - Supports cancellation via AbortSignal (concurrent cancellations must be
  *   handled in the task function)
- * - Can be used with Cell.createComposite for grouping multiple tasks
+ * - Can be used with Cell.composite for grouping multiple tasks
  *
  * @template {*} out I - The input type of the task function.
  * @template {*} out T - The type of the resolved async value.
