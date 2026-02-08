@@ -24,8 +24,6 @@
  * Whether the effect should be removed after the first run.
  * @property {AbortSignal} [signal]
  * An AbortSignal to be used to ignore the effect if it is aborted.
- * @property {string} [name]
- * The name of the effect for debugging purposes.
  * @property {boolean} [weak]
  * Whether the effect should be weakly referenced. This means that the effect will be garbage collected if there are no other references to it.
  * @property {number} [priority]
@@ -35,8 +33,6 @@
 /**
  * @template T
  * @typedef {object} CellOptions
- * @property {boolean} [immutable]
- * Whether the cell should be immutable. If set to true, the cell will not allow updates and will throw an error if the value is changed.
  * @property {(oldValue: T, newValue: T) => boolean} [equals]
  * A function that determines whether two values are equal. If not provided, the default equality function will be used.
  */
@@ -454,12 +450,6 @@ export class Cell {
       };
     }
 
-    if (options?.name && this.isListeningTo(options.name)) {
-      throw new Error(
-        `An effect with the name "${options.name}" is already listening to this cell.`,
-      );
-    }
-
     const isAlreadySubscribed = this.#effects.some((effect) => {
       return effect.callback === callback;
     });
@@ -509,11 +499,6 @@ export class Cell {
 
     if (options?.once) return () => this.ignore(cb);
 
-    if (options?.name && this.isListeningTo(options.name)) {
-      const message = `An effect with the name "${options.name}" is already listening to this cell.`;
-      throw new Error(message);
-    }
-
     const isAlreadySubscribed = this.#effects.some((e) => {
       return e.callback === callback;
     });
@@ -547,30 +532,6 @@ export class Cell {
     if (index === -1) return;
 
     this.#effects.splice(index, 1);
-  }
-
-  /**
-   * Checks if the cell is listening to a watcher with the specified name.
-   * @param {string} name - The name of the watcher to check for.
-   * @returns {boolean} `true` if the cell is listening to a watcher with the specified name, `false` otherwise.
-   */
-  isListeningTo(name) {
-    return this.#effects.some((effect) => {
-      return effect?.options?.name === name && effect.callback;
-    });
-  }
-
-  /**
-   * Removes the watcher with the specified name from the list of effects for this cell.
-   * @param {string} name - The name of the watcher to stop listening to.
-   */
-  stopListeningTo(name) {
-    const effectIndex = this.#effects.findIndex((e) => {
-      return e.options?.name === name;
-    });
-    if (effectIndex === -1) return;
-
-    this.#effects.splice(effectIndex, 1);
   }
 
   /**
@@ -985,14 +946,6 @@ export class DerivedCell extends Cell {
  * ```typescript
  * const count = Cell.source(0);
  * ```
- *
- * @example
- * ```typescript
- * // With options
- * const immutableCell = Cell.source(42, { immutable: true });
- * // Will throw error:
- * immutableCell.set(43);
- * ```
  */
 export class SourceCell extends Cell {
   /**
@@ -1025,10 +978,6 @@ export class SourceCell extends Cell {
    * @param {T} value
    */
   set(value) {
-    if (this.options?.immutable) {
-      throw new Error('Cannot set the value of an immutable cell.');
-    }
-
     const oldValue = this.wvalue;
     const isEqual = this.options?.equals
       ? this.options.equals(oldValue, value)
