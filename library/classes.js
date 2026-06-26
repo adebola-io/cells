@@ -633,11 +633,12 @@ export class Cell {
    * with built-in support for cancellation, loading state, and error handling.
    *
    * @template U
-   * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => Promise<U>} callback - An async function that computes the derived value.
+   * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => U} callback - A function that computes the derived value.
    *   - `get`: A function to read cell values while tracking them as dependencies.
    *   - `signal`: An AbortSignal that is aborted when a new computation starts,
    *     useful for cancelling in-flight requests.
-   * @returns {AsyncDerivedCell<U>} A new AsyncDerivedCell instance.
+   * @returns {AsyncDerivedCell<Awaited<U>>} A new AsyncDerivedCell instance.
+   * @type <U>(callback: (get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => U) => AsyncDerivedCell<Awaited<U>>
    *
    * @example
    * ```javascript
@@ -659,7 +660,8 @@ export class Cell {
    * const data = await userData.get();
    * ```
    */
-  static derivedAsync = (callback) => new AsyncDerivedCell(callback);
+  static derivedAsync = (callback) =>
+    /** @type {AsyncDerivedCell<Awaited<U>>} */ (new AsyncDerivedCell(callback));
 
   /**
    * Creates a new AsyncTaskCell that represents a one-time asynchronous computation.
@@ -1041,7 +1043,7 @@ export class AsyncCell extends DerivedCell {
   error = Cell.source(null);
 
   /**
-   * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => Promise<T>} fn
+   * @param {(get: <T>(cell: Cell<T>) => T, signal: AbortSignal) => T | Promise<T>} fn
    */
   constructor(fn) {
     const initialState = /** @type {Promise<T>} */ (Promise.resolve(null));
