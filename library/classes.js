@@ -60,53 +60,6 @@ let BATCHED_EFFECTS = new Map();
  */
 const ACTIVE_DERIVED_CTX = [];
 
-/**
- * @template {WeakKey & { ref: WeakRef<any> | null }} Value
- * @extends {Set<Value>}
- */
-class InternallyWeakSet {
-  /** @type {Set<WeakRef<Value>>} */
-  #internal = new Set();
-
-  /** @param {Value} value */
-  add(value) {
-    if (value.ref === null) value.ref = new WeakRef(value);
-    this.#internal.add(value.ref);
-    return this;
-  }
-
-  /** @param {Value} value */
-  delete(value) {
-    if (value.ref === null) return false;
-    return this.#internal.delete(value.ref);
-  }
-
-  /** @param {Value} value */
-  has(value) {
-    if (value.ref === null) return false;
-    return this.#internal.has(value.ref);
-  }
-
-  *[Symbol.iterator]() {
-    for (const ref of this.#internal) {
-      const value = ref.deref();
-      if (value) yield value;
-      else this.#internal.delete(ref); // Cleanup dead refs while iterating
-    }
-  }
-}
-
-/**
- * @template {WeakKey & { ref: WeakRef<any> | null }}  Value
- * @typedef {InternallyWeakSet<Value> | Set<Value>} SetLike
- */
-
-/**
- * @template {WeakKey & { ref: WeakRef<any> | null }} Key
- * @template Value
- * @typedef {Map<Key, Value> | WeakMap<Key, Value>} MapLike
- */
-
 const GlobalTrackingContext = {};
 let CurrentTrackingContext = GlobalTrackingContext;
 const Depth = Symbol();
@@ -351,22 +304,14 @@ export class Cell {
    */
   #effects = [];
 
-  /** @type {WeakRef<this> | null} */
-  ref = null;
-
   constructor() {
     if (new.target === Cell) {
       throw new Error(
         'Cell should not be instantiated directly. Use `Cell.source` or `Cell.derived` instead.',
       );
     }
-    /**
-     * @type {SetLike<DerivedCell<any>>}
-     */
-    this.derivations =
-      CurrentTrackingContext === GlobalTrackingContext
-        ? new InternallyWeakSet()
-        : new Set();
+    /** @type {Set<DerivedCell<any>>} */
+    this.derivations = new Set();
   }
 
   /**

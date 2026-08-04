@@ -3616,9 +3616,13 @@ describe('Tracking contexts', () => {
 				});
 			});
 
+			expect(source.derivations).toBeInstanceOf(Set);
+			expect(source.derivations.size).toBe(1);
+
 			source.set(20);
 			expect(derivedValue).toBe(40);
 			context.destroy();
+			expect(source.derivations.size).toBe(0);
 			source.set(30);
 
 			expect(derivedValue).toBe(40);
