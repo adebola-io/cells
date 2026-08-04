@@ -957,6 +957,10 @@ export class AsyncCell extends DerivedCell {
   #abandonLastComputation;
   /** @type {AbortController | undefined} */
   #controller;
+  /** @type {Promise<void>} */
+  #pendingPromise;
+  /** @type {undefined | (() => void)} */
+  #resolvePending;
 
   /**
    * @protected
@@ -998,17 +1002,21 @@ export class AsyncCell extends DerivedCell {
   constructor(fn) {
     const initialState = /** @type {Promise<T>} */ (Promise.resolve(null));
     super(() => initialState);
+    this.#pendingPromise = new Promise((resolve) => {
+      this.#resolvePending = resolve;
+    });
     let lastStablePromise = initialState;
+    let lastStableValue = /** @type {T | null} */ (null);
     let runId = 0;
 
-    this.computedFn = async () => {
+    this.computedFn = () => {
       if (this[IsDisposed]) return this.wvalue;
 
       const currentRunId = ++runId;
+      this.#consumed.clear();
       const derivedCtx = /** @type {[this, number, Set<Cell<any>>]} */ (
         [this, 0, new Set()]
       );
-      this.#consumed.clear();
 
       /**
        * @template X
@@ -1032,20 +1040,25 @@ export class AsyncCell extends DerivedCell {
         }
       };
 
-      Cell.batch(() => {
-        this.pending.set(true);
-        this.error.set(null);
-      });
+      const wasPending = this.pending.peek();
+      const hadError = this.error.peek() !== null;
+      if (!wasPending) {
+        this.#pendingPromise = new Promise((resolve) => {
+          this.#resolvePending = resolve;
+        });
+      }
+      if (!wasPending || hadError) {
+        Cell.batch(() => {
+          if (!wasPending) this.pending.set(true);
+          if (hadError) this.error.set(null);
+        });
+      }
+      if (currentRunId !== runId) return this.wvalue;
 
       this.#controller?.abort();
       this.#controller = new AbortController();
 
-      /** @type {null | ((value: boolean) => void)} */
-      let resolveChangedState = null;
-      /** @type {Promise<boolean>} */
-      const valueHasChanged = new Promise((resolve) => {
-        resolveChangedState = resolve;
-      });
+      const state = { changed: false, failed: false };
       // if this cell discards this promise and starts another,
       // we do not want to its children to be stuck waiting for the old.
       // We are not using signal.addEventListener('abort') here because
@@ -1054,40 +1067,52 @@ export class AsyncCell extends DerivedCell {
       // so they don't resolve prematurely.
       /** @type {undefined | (() => void)} */
       let abandonComputation;
-      /** @type {Promise<T | null>} */
+      /** @type {Promise<T>} */
       const tripwire = new Promise((resolve) => {
         abandonComputation = () => resolve(lastStablePromise);
       });
 
-      const current = Promise.race([
-        tripwire,
-        new Promise((resolve) => resolve(fn(get, this._signal))),
-      ])
+      /** @type {Promise<T>} */
+      let computation;
+      try {
+        computation = /** @type {Promise<T>} */ (
+          Promise.resolve(fn(get, this._signal))
+        );
+      } catch (error) {
+        computation = Promise.reject(error);
+      }
+
+      const current = Promise.race([tripwire, computation])
         .catch((error) => {
+          state.failed = true;
           if (currentRunId === runId) {
+            const resolvePending = this.#resolvePending;
+            this.#resolvePending = undefined;
             Cell.batch(() => {
               this.pending.set(false);
               this.error.set(error);
             });
+            resolvePending?.();
           }
           return lastStablePromise;
         })
-        .then(async (value) => {
-          if (currentRunId === runId) {
+        .then((value) => {
+          if (currentRunId === runId && !state.failed) {
+            const resolvePending = this.#resolvePending;
+            this.#resolvePending = undefined;
+            state.changed = !deepEqual(lastStableValue, value);
             this.pending.set(false);
-            resolveChangedState?.(!deepEqual(await lastStablePromise, value));
-          } else {
-            resolveChangedState?.(false);
+            resolvePending?.();
           }
           return value;
         });
       this.wvalue = current;
 
-      this.#notify(current, valueHasChanged, lastStablePromise, initialState);
+      this.#notify(current, state, lastStablePromise, initialState);
       this.#abandonLastComputation?.();
       this.#abandonLastComputation = abandonComputation;
 
-      current.finally(async () => {
+      current.then((value) => {
         if (currentRunId !== runId || this[IsDisposed]) return;
 
         const nextSources = derivedCtx[2];
@@ -1096,6 +1121,7 @@ export class AsyncCell extends DerivedCell {
         }
         this.sources = nextSources;
         this[Depth] = derivedCtx[1] + 1;
+        lastStableValue = value;
 
         if (lastStablePromise === initialState) {
           // We only run update() for subsequent changes, not initial resolution.
@@ -1103,7 +1129,7 @@ export class AsyncCell extends DerivedCell {
           return;
         }
         lastStablePromise = current;
-        if (await valueHasChanged) this.update();
+        if (state.changed) this.update();
       });
 
       return this.wvalue;
@@ -1114,18 +1140,18 @@ export class AsyncCell extends DerivedCell {
 
   /**
    * @param {Promise<any>} promise
-   * @param {Promise<boolean>} valueHasChanged
+   * @param {{ changed: boolean }} state
    * @param {Promise<any>} lastStablePromise
    * @param {Promise<any>} initialState
    */
-  #notify(promise, valueHasChanged, lastStablePromise, initialState) {
+  #notify(promise, state, lastStablePromise, initialState) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
       if (child.#upstream.has(promise)) continue;
 
-      // Only direct children should be scheduled based on this cell's valueHasChanged.
+      // Only direct children should be scheduled based on this cell's value change.
       // Grandchildren will be scheduled by their direct parent when it computes.
-      promise.then(async () => {
+      promise.then(() => {
         child.#upstream.delete(promise);
         if (this[IsDisposed] || child[IsDisposed]) return;
         if (lastStablePromise === initialState) {
@@ -1137,7 +1163,8 @@ export class AsyncCell extends DerivedCell {
         if (child.pending.peek() && !child.#consumed.has(this)) {
           return;
         }
-        if (!child[IsScheduled] && (await valueHasChanged)) {
+        if (!child[IsScheduled] && state.changed) {
+          child[IsScheduled] = true;
           UPDATE_BUFFER.push(child);
           if (!IS_UPDATING) triggerUpdate();
         }
@@ -1171,14 +1198,17 @@ export class AsyncCell extends DerivedCell {
    * Returns the current value of the async cell.
    * @returns {Promise<T>}
    */
-  async get() {
+  get() {
     super.get(); // Forces a dependency registration in sync time.
-    while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
-    return new Promise((resolve) => {
-      if (this.pending.peek()) {
-        this.pending.listen(() => resolve(this.wvalue), { once: true });
-      } else resolve(this.wvalue);
-    });
+    if (this.#upstream.size === 0 && !this.pending.peek()) return this.wvalue;
+
+    return (async () => {
+      while (this.#upstream.size) {
+        await Promise.allSettled(this.#upstream);
+      }
+      if (this.pending.peek()) await this.#pendingPromise;
+      return this.wvalue;
+    })();
   }
 
   [DisposeAsyncCell]() {
@@ -1191,15 +1221,16 @@ export class AsyncCell extends DerivedCell {
    * but it does not register this cell as a dependency of the calling context.
    * @returns {Promise<T>} A promise that resolves to the current value.
    */
-  async peek() {
-    while (this.#upstream.size) await Promise.allSettled([...this.#upstream]);
-    return new Promise((resolve) => {
-      if (this.pending.peek()) {
-        this.pending.listen(() => resolve(this.wvalue), { once: true });
-      } else {
-        resolve(this.wvalue);
+  peek() {
+    if (this.#upstream.size === 0 && !this.pending.peek()) return this.wvalue;
+
+    return (async () => {
+      while (this.#upstream.size) {
+        await Promise.allSettled(this.#upstream);
       }
-    });
+      if (this.pending.peek()) await this.#pendingPromise;
+      return this.wvalue;
+    })();
   }
 }
 
@@ -1385,9 +1416,8 @@ export class AsyncTaskCell extends AsyncCell {
      * const anotherUser = await task.runWith(456);
      * ```
      */
-    this.runWith = async (input) => {
+    this.runWith = (input) => {
       const isFirstExecution = !hasExecuted;
-      this.abort();
       currentInput = input;
       hasInput = true;
       const value = this.computedFn();
