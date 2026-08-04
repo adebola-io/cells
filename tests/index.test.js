@@ -3329,6 +3329,41 @@ describe('Cell.derivedAsync', () => {
 		});
 	});
 
+	describe('Dependency reconciliation', () => {
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => vi.useRealTimers());
+
+		test('async cells detach dependencies from inactive branches', async () => {
+			const useA = Cell.source(true);
+			const a = Cell.source(1);
+			const b = Cell.source(2);
+			const compute = vi.fn(async (get) => {
+				const active = get(useA);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				return active ? get(a) : get(b);
+			});
+			const value = Cell.derivedAsync(compute);
+
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await value.get()).toBe(1);
+
+			useA.set(false);
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await value.get()).toBe(2);
+			expect(a.derivations.size).toBe(0);
+
+			a.set(10);
+			await vi.advanceTimersByTimeAsync(20);
+			expect(await value.get()).toBe(2);
+			expect(compute).toHaveBeenCalledTimes(2);
+
+			b.set(20);
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await value.get()).toBe(20);
+			expect(compute).toHaveBeenCalledTimes(3);
+		});
+	});
+
 	describe('Async Deadlock on Dispose', () => {
 		test('Should release downstream cells immediately upon disposal', async () => {
 			const context = Cell.context();
@@ -3360,6 +3395,32 @@ describe('Cell.derivedAsync', () => {
 			await expect(
 				Promise.race([downstream.get(), timeout]),
 			).resolves.not.toThrow();
+		});
+
+		test('Disposed async cells cannot attach delayed dependencies', async () => {
+			let release;
+			const source = Cell.source(1);
+			const context = Cell.context();
+			const compute = vi.fn();
+
+			Cell.runWithContext(context, () => {
+				Cell.derivedAsync(async (get) => {
+					compute();
+					await new Promise((resolve) => {
+						release = resolve;
+					});
+					return get(source);
+				});
+			});
+
+			context.destroy();
+			release();
+			await new Promise((resolve) => setTimeout(resolve));
+
+			expect(source.derivations.size).toBe(0);
+			source.set(2);
+			await new Promise((resolve) => setTimeout(resolve));
+			expect(compute).toHaveBeenCalledTimes(1);
 		});
 	});
 });
@@ -3466,6 +3527,27 @@ describe('Derived Cells', () => {
 		b.set(20);
 		expect(cb).toHaveBeenCalledTimes(3);
 		expect(c.get()).toEqual(25);
+	});
+
+	test('derived cells detach dependencies from inactive branches', () => {
+		const useA = Cell.source(true);
+		const a = Cell.source(1);
+		const b = Cell.source(2);
+		const compute = vi.fn(() => (useA.get() ? a.get() : b.get()));
+		const value = Cell.derived(compute);
+
+		expect(value.get()).toBe(1);
+		useA.set(false);
+		expect(value.get()).toBe(2);
+		expect(a.derivations.size).toBe(0);
+
+		a.set(10);
+		expect(value.get()).toBe(2);
+		expect(compute).toHaveBeenCalledTimes(2);
+
+		b.set(20);
+		expect(value.get()).toBe(20);
+		expect(compute).toHaveBeenCalledTimes(3);
 	});
 });
 
@@ -3626,6 +3708,55 @@ describe('Tracking contexts', () => {
 			source.set(30);
 
 			expect(derivedValue).toBe(40);
+		});
+
+		test('Context destruction detaches dependencies discovered later', () => {
+			const useB = Cell.source(false);
+			const a = Cell.source(1);
+			const b = Cell.source(2);
+			const context = Cell.context();
+			const compute = vi.fn(() => (useB.get() ? b.get() : a.get()));
+			let derived;
+
+			Cell.runWithContext(context, () => {
+				derived = Cell.derived(compute);
+			});
+
+			expect(derived.get()).toBe(1);
+			useB.set(true);
+			expect(derived.get()).toBe(2);
+			expect(a.derivations.size).toBe(0);
+			expect(b.derivations.size).toBe(1);
+
+			context.destroy();
+
+			expect(useB.derivations.size).toBe(0);
+			expect(b.derivations.size).toBe(0);
+			b.set(3);
+			expect(compute).toHaveBeenCalledTimes(2);
+		});
+
+		test('Disposed derivations sever downstream graph edges', () => {
+			const source = Cell.source(1);
+			const context = Cell.context();
+			let inner;
+
+			Cell.runWithContext(context, () => {
+				inner = Cell.derived(() => source.get() * 2);
+			});
+			const outer = Cell.derived(() => inner.get() + 1);
+
+			expect(inner.derivations.has(outer)).toBe(true);
+			expect(outer.sources.has(inner)).toBe(true);
+
+			context.destroy();
+
+			expect(inner.derivations.size).toBe(0);
+			expect(outer.sources.has(inner)).toBe(false);
+
+			const retainedRead = Cell.derived(() => inner.get());
+			expect(inner.derivations.size).toBe(0);
+			expect(retainedRead.sources.size).toBe(0);
 		});
 
 		test('Nested contexts should handle stack correctly', () => {

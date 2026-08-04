@@ -56,7 +56,7 @@ let BATCHED_EFFECTS = new Map();
  * A value representing the computed values that are currently being calculated,
  * and the largest depth encountered.
  * It is an array so it can keep track of nested computed values.
- * @type {[DerivedCell<any>, number][]}
+ * @type {[DerivedCell<any>, number, Set<Cell<any>>][]}
  */
 const ACTIVE_DERIVED_CTX = [];
 
@@ -65,7 +65,9 @@ let CurrentTrackingContext = GlobalTrackingContext;
 const Depth = Symbol();
 const IsScheduled = Symbol();
 const Deferred = Symbol();
+const DisposeCell = Symbol();
 const DisposeAsyncCell = Symbol();
+const IsDisposed = Symbol();
 
 /**
  * Tracks cells that need to be updated during the update cycle.
@@ -212,8 +214,8 @@ class Effect {
 }
 
 export class LocalContext {
-  /** @type {Map<DerivedCell<any>, Set<Cell<any>>>} */
-  derivationSourceMap = new Map();
+  /** @type {Set<DerivedCell<any>>} */
+  derivations = new Set();
   /** @type {Map<Cell<any>, Set<Effect<any>>>} */
   effects = new Map();
 
@@ -222,26 +224,19 @@ export class LocalContext {
       throw new Error('Cannot destroy a context inside its callback.');
     }
 
-    for (const [derivation, sources] of this.derivationSourceMap) {
-      for (const source of sources) {
-        source.derivations.delete(derivation);
-      }
+    for (const derivation of this.derivations) {
+      derivation[DisposeCell]();
       if (derivation instanceof AsyncCell) derivation[DisposeAsyncCell]();
     }
 
     for (const [cell, effects] of this.effects) {
-      if (cell instanceof DerivedCell && this.derivationSourceMap.has(cell)) {
-        // There is no point to ignoring the listener, since it will be disposed
-        // and unreachable on the graph anyway.
-        continue;
-      }
-
       for (const effect of effects) {
-        if (effect.callback !== undefined) cell.ignore(effect.callback);
+        const callback = effect.callback;
+        if (callback !== undefined) cell.ignore(callback);
       }
     }
 
-    this.derivationSourceMap.clear();
+    this.derivations.clear();
     this.effects.clear();
   }
 }
@@ -298,6 +293,7 @@ export class Cell {
    * @protected
    */
   [IsScheduled] = false;
+  [IsDisposed] = false;
 
   /**
    * @type {Array<Effect<T>>}
@@ -355,19 +351,15 @@ export class Cell {
     }
 
     const [currentlyComputedValue] = ctx;
-    const isAlreadySubscribed = this.derivations.has(currentlyComputedValue);
-    if (isAlreadySubscribed) {
+    if (this[IsDisposed] || currentlyComputedValue[IsDisposed]) {
       return this.wvalue;
     }
     if (this instanceof DerivedCell && this[Depth] > ctx[1]) {
       ctx[1] = this[Depth];
     }
     this.derivations.add(currentlyComputedValue);
-    if (CurrentTrackingContext instanceof LocalContext) {
-      CurrentTrackingContext.derivationSourceMap
-        .get(currentlyComputedValue)
-        ?.add(this);
-    }
+    currentlyComputedValue.sources.add(this);
+    ctx[2].add(this);
     return this.wvalue;
   }
 
@@ -840,27 +832,38 @@ export class DerivedCell extends Cell {
   [Depth] = 0;
   [Deferred] = false;
 
+  /** @type {Set<Cell<any>>} */
+  sources = new Set();
+
   /**
    * @param {() => T} computedFn - A function that generates the value of the computed.
    */
   constructor(computedFn) {
     super();
     if (CurrentTrackingContext instanceof LocalContext) {
-      CurrentTrackingContext.derivationSourceMap.set(this, new Set());
+      CurrentTrackingContext.derivations.add(this);
     }
 
     // Ensures that the cell is derived every time the computing function is called.
     const derivationWrapper = () => {
-      ACTIVE_DERIVED_CTX.push([this, 0]);
+      if (this[IsDisposed]) return this.wvalue;
+
+      const nextSources = new Set();
+      ACTIVE_DERIVED_CTX.push([this, 0, nextSources]);
       try {
         return computedFn();
       } catch (e) {
         if (e instanceof Error) cellErrors.push(e);
         return this.wvalue;
       } finally {
-        const i = /** @type {[this, number]} */ (ACTIVE_DERIVED_CTX.pop());
-        const [, depth] = i;
-        if (depth + 1 > this[Depth]) this[Depth] = depth + 1;
+        const [, depth] = /** @type {[this, number, Set<Cell<any>>]} */ (
+          ACTIVE_DERIVED_CTX.pop()
+        );
+        for (const source of this.sources) {
+          if (!nextSources.has(source)) source.derivations.delete(this);
+        }
+        this.sources = nextSources;
+        this[Depth] = depth + 1;
       }
     };
 
@@ -868,6 +871,19 @@ export class DerivedCell extends Cell {
     this.wvalue = derivationWrapper();
     this.computedFn = /** @type {() => T} */ (derivationWrapper);
     throwAnyErrors();
+  }
+
+  [DisposeCell]() {
+    if (this[IsDisposed]) return;
+    this[IsDisposed] = true;
+
+    for (const source of this.sources) source.derivations.delete(this);
+    this.sources.clear();
+
+    for (const derivation of this.derivations) {
+      derivation.sources.delete(this);
+    }
+    this.derivations.clear();
   }
 
   /** @type {() => T} */
@@ -994,32 +1010,38 @@ export class AsyncCell extends DerivedCell {
     const initialState = /** @type {Promise<T>} */ (Promise.resolve(null));
     super(() => initialState);
     let lastStablePromise = initialState;
-    /** @type [this, number] */
-    let derivedCtx = [this, this[Depth]];
     let runId = 0;
 
-    /**
-     * @template T
-     * @param {Cell<T>} cell
-     * @returns {T}
-     */
-    const get = (cell) => {
-      ACTIVE_DERIVED_CTX.push(derivedCtx);
-      const value = cell.get();
-      if (cell instanceof AsyncCell && value instanceof Promise) {
-        const currentRunId = runId;
-        value.then(() => {
-          if (runId === currentRunId) this.#consumed.add(cell);
-        });
-      }
-      ACTIVE_DERIVED_CTX.pop();
-      return value;
-    };
-
     this.computedFn = async () => {
+      if (this[IsDisposed]) return this.wvalue;
+
       const currentRunId = ++runId;
+      const derivedCtx = /** @type {[this, number, Set<Cell<any>>]} */ (
+        [this, 0, new Set()]
+      );
       this.#consumed.clear();
-      derivedCtx = [this, this[Depth]];
+
+      /**
+       * @template X
+       * @param {Cell<X>} cell
+       * @returns {X}
+       */
+      const get = (cell) => {
+        if (currentRunId !== runId || this[IsDisposed]) return cell.peek();
+
+        ACTIVE_DERIVED_CTX.push(derivedCtx);
+        try {
+          const value = cell.get();
+          if (cell instanceof AsyncCell && value instanceof Promise) {
+            value.then(() => {
+              if (runId === currentRunId) this.#consumed.add(cell);
+            });
+          }
+          return value;
+        } finally {
+          ACTIVE_DERIVED_CTX.pop();
+        }
+      };
 
       Cell.batch(() => {
         this.pending.set(true);
@@ -1077,14 +1099,21 @@ export class AsyncCell extends DerivedCell {
       this.#abandonLastComputation = abandonComputation;
 
       current.finally(async () => {
-        if (currentRunId !== runId) return;
+        if (currentRunId !== runId || this[IsDisposed]) return;
+
+        const nextSources = derivedCtx[2];
+        for (const source of this.sources) {
+          if (!nextSources.has(source)) source.derivations.delete(this);
+        }
+        this.sources = nextSources;
+        this[Depth] = derivedCtx[1] + 1;
+
         if (lastStablePromise === initialState) {
           // We only run update() for subsequent changes, not initial resolution.
           lastStablePromise = current;
           return;
         }
         lastStablePromise = current;
-        if (derivedCtx[1] + 1 > this[Depth]) this[Depth] = derivedCtx[1] + 1;
         if (await valueHasChanged) this.update();
       });
 
@@ -1109,6 +1138,7 @@ export class AsyncCell extends DerivedCell {
       // Grandchildren will be scheduled by their direct parent when it computes.
       promise.then(async () => {
         child.#upstream.delete(promise);
+        if (this[IsDisposed] || child[IsDisposed]) return;
         if (lastStablePromise === initialState) {
           return;
         }
