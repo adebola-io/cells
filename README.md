@@ -226,7 +226,7 @@ const user = Cell.source(
 
 #### Memory Management (Contexts)
 
-For high-performance scenarios involving many dynamically created cells, use `LocalContext` for manual disposal.
+Cells keep their derived dependents strongly referenced so updates remain deterministic. For high-performance scenarios involving many dynamically created cells, use `LocalContext` to dispose of those derivations explicitly.
 
 ```javascript
 const ctx = Cell.context();

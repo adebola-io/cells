@@ -175,6 +175,38 @@ describe('Effects', () => {
 		expect(callback).toHaveBeenCalledTimes(1);
 	});
 
+	test('Cell should reschedule same-cell writes made by an effect', () => {
+		const cell = Cell.source(0);
+		const values = [];
+
+		cell.listen((value) => {
+			values.push(value);
+			if (value === 1) cell.set(2);
+		});
+
+		cell.set(1);
+
+		expect(values).toEqual([1, 2]);
+		expect(cell.get()).toBe(2);
+	});
+
+	test('Nested batches should preserve re-entrant same-cell writes', () => {
+		const cell = Cell.source(0);
+		const values = [];
+
+		cell.listen((value) => {
+			values.push(value);
+			if (value === 1) {
+				Cell.batch(() => cell.set(2));
+			}
+		});
+
+		cell.set(1);
+
+		expect(values).toEqual([1, 2]);
+		expect(cell.get()).toBe(2);
+	});
+
 	test('Cells should have updated values when read in effects', () => {
 		const cell = Cell.source(1);
 		const derivedCell = Cell.derived(() => cell.get() * 2);
@@ -1069,6 +1101,75 @@ describe('Batched effects', () => {
 		expect(order).toBe('ABC');
 	});
 
+	test('Default-priority listeners should precede negative priorities', () => {
+		const cell = Cell.source(0);
+		let order = '';
+
+		cell.listen(() => (order += 'N'), { priority: -1 });
+		cell.listen(() => (order += 'D'));
+		cell.set(1);
+
+		expect(order).toBe('DN');
+	});
+
+	test('Equal-priority listeners preserve registration order', () => {
+		const cell = Cell.source(0);
+		let order = '';
+
+		cell.listen(() => (order += 'A'), { priority: 1 });
+		cell.listen(() => (order += 'B'), { priority: 1 });
+		cell.listen(() => (order += 'C'), { priority: 1 });
+		cell.set(1);
+
+		expect(order).toBe('ABC');
+	});
+
+	test('runAndListen should preserve default and negative priority order', () => {
+		const cell = Cell.source(0);
+		let order = '';
+
+		cell.runAndListen(() => (order += 'N'), { priority: -1 });
+		cell.runAndListen(() => (order += 'D'));
+		order = '';
+		cell.set(1);
+
+		expect(order).toBe('DN');
+	});
+
+	test('Nested batches should notify once with the final value', () => {
+		const cell = Cell.source(0);
+		const callback = vi.fn();
+		cell.listen(callback);
+
+		Cell.batch(() => {
+			cell.set(1);
+			Cell.batch(() => {
+				cell.set(2);
+				cell.set(3);
+			});
+			cell.set(4);
+		});
+
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect(callback).toHaveBeenCalledWith(4);
+	});
+
+	test('Batched listeners can start isolated nested batches', () => {
+		const source = Cell.source(0);
+		const target = Cell.source(0);
+		const values = [];
+
+		source.listen((value) => {
+			values.push(`source:${value}`);
+			Cell.batch(() => target.set(value * 2));
+		});
+		target.listen((value) => values.push(`target:${value}`));
+
+		Cell.batch(() => source.set(3));
+
+		expect(values).toEqual(['source:3', 'target:6']);
+	});
+
 	test('Batch with conditional derived cell updates', () => {
 		const toggle = Cell.source(true);
 		const a = Cell.source(1);
@@ -1423,6 +1524,55 @@ describe('Cell.derivedAsync', () => {
 			expect(await asyncCell.get()).toBe(20);
 		});
 
+		test('completion listeners can restart without stranding pending reads', async () => {
+			const source = Cell.source(1);
+			const asyncCell = Cell.derivedAsync(async (get) => {
+				const value = get(source);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				return value;
+			});
+			let restarted = false;
+			asyncCell.pending.listen((isPending) => {
+				if (!isPending && !restarted) {
+					restarted = true;
+					source.set(2);
+				}
+			});
+
+			const read = asyncCell.get();
+			await vi.advanceTimersByTimeAsync(30);
+
+			expect(await read).toBe(2);
+			expect(await asyncCell.get()).toBe(2);
+			expect(asyncCell.pending.get()).toBe(false);
+		});
+
+		test('pending listeners can replace a run during startup', async () => {
+			const source = Cell.source(1);
+			const asyncCell = Cell.derivedAsync(async (get) => {
+				const value = get(source);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				return value;
+			});
+
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await asyncCell.get()).toBe(1);
+
+			let restarted = false;
+			asyncCell.pending.listen((isPending) => {
+				if (isPending && !restarted) {
+					restarted = true;
+					source.set(3);
+				}
+			});
+
+			source.set(2);
+			await vi.advanceTimersByTimeAsync(20);
+
+			expect(await asyncCell.get()).toBe(3);
+			expect(asyncCell.pending.get()).toBe(false);
+		});
+
 		test('handles non-async callback', async () => {
 			const source = Cell.source(5);
 			const asyncCell = Cell.derivedAsync((get) => get(source) * 2);
@@ -1430,6 +1580,15 @@ describe('Cell.derivedAsync', () => {
 			await vi.advanceTimersByTimeAsync(0);
 			expect(await asyncCell.get()).toBe(10);
 			expect(asyncCell.pending.get()).toBe(false);
+		});
+
+		test('settled reads reuse the active value promise', async () => {
+			const asyncCell = Cell.derivedAsync(() => 42);
+
+			await vi.advanceTimersByTimeAsync(0);
+			expect(await asyncCell.get()).toBe(42);
+			expect(asyncCell.get()).toBe(asyncCell.wvalue);
+			expect(asyncCell.peek()).toBe(asyncCell.wvalue);
 		});
 
 		test('stores null and undefined correctly', async () => {
@@ -1500,6 +1659,24 @@ describe('Cell.derivedAsync', () => {
 			await vi.advanceTimersByTimeAsync(20);
 			expect(await asyncCell.get()).toBe('B');
 			expect(values.filter((v) => v === 'A').length).toBe(0);
+		});
+
+		test('reads started before a restart resolve the latest run', async () => {
+			const source = Cell.source(1);
+			const asyncCell = Cell.derivedAsync(async (get) => {
+				const value = get(source);
+				await new Promise((resolve) => setTimeout(resolve, 20));
+				return value * 10;
+			});
+
+			const first = asyncCell.get();
+			const second = asyncCell.get();
+			await vi.advanceTimersByTimeAsync(5);
+			source.set(2);
+			const third = asyncCell.get();
+			await vi.advanceTimersByTimeAsync(30);
+
+			expect(await Promise.all([first, second, third])).toEqual([20, 20, 20]);
 		});
 
 		test('rapid updates only commit final result', async () => {
@@ -1642,6 +1819,27 @@ describe('Cell.derivedAsync', () => {
 
 			expect(asyncCell.error.get()).toBeInstanceOf(Error);
 			expect(await asyncCell.get()).toBe('valid');
+		});
+
+		test('synchronous callback errors preserve the stable value', async () => {
+			const shouldFail = Cell.source(false);
+			const asyncCell = Cell.derivedAsync((get) => {
+				if (get(shouldFail)) throw new Error('Synchronous failure');
+				return 'stable';
+			});
+
+			await vi.advanceTimersByTimeAsync(0);
+			expect(await asyncCell.get()).toBe('stable');
+
+			shouldFail.set(true);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(await asyncCell.get()).toBe('stable');
+			expect(asyncCell.error.get()?.message).toBe('Synchronous failure');
+
+			shouldFail.set(false);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(await asyncCell.get()).toBe('stable');
+			expect(asyncCell.error.get()).toBeNull();
 		});
 
 		test('error clears on successful recovery', async () => {
@@ -2077,6 +2275,39 @@ describe('Cell.derivedAsync', () => {
 			expect(a.pending.get()).toBe(false);
 			expect(b.pending.get()).toBe(false);
 			expect(c.pending.get()).toBe(false);
+		});
+
+		test('simultaneous async parents schedule one child recomputation', async () => {
+			const sourceA = Cell.source(1);
+			const sourceB = Cell.source(2);
+			const parentA = Cell.derivedAsync(async (get) => {
+				const value = get(sourceA);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				return value;
+			});
+			const parentB = Cell.derivedAsync(async (get) => {
+				const value = get(sourceB);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				return value;
+			});
+			const computeChild = vi.fn(async (get) => {
+				const [a, b] = await Promise.all([get(parentA), get(parentB)]);
+				return a + b;
+			});
+			const child = Cell.derivedAsync(computeChild);
+
+			await vi.advanceTimersByTimeAsync(20);
+			expect(await child.get()).toBe(3);
+			computeChild.mockClear();
+
+			Cell.batch(() => {
+				sourceA.set(10);
+				sourceB.set(20);
+			});
+			await vi.advanceTimersByTimeAsync(20);
+
+			expect(await child.get()).toBe(30);
+			expect(computeChild).toHaveBeenCalledTimes(1);
 		});
 
 		test('multiple async parents changing concurrently resolve correctly', async () => {
@@ -3329,6 +3560,41 @@ describe('Cell.derivedAsync', () => {
 		});
 	});
 
+	describe('Dependency reconciliation', () => {
+		beforeEach(() => vi.useFakeTimers());
+		afterEach(() => vi.useRealTimers());
+
+		test('async cells detach dependencies from inactive branches', async () => {
+			const useA = Cell.source(true);
+			const a = Cell.source(1);
+			const b = Cell.source(2);
+			const compute = vi.fn(async (get) => {
+				const active = get(useA);
+				await new Promise((resolve) => setTimeout(resolve, 10));
+				return active ? get(a) : get(b);
+			});
+			const value = Cell.derivedAsync(compute);
+
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await value.get()).toBe(1);
+
+			useA.set(false);
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await value.get()).toBe(2);
+			expect(a.derivations.size).toBe(0);
+
+			a.set(10);
+			await vi.advanceTimersByTimeAsync(20);
+			expect(await value.get()).toBe(2);
+			expect(compute).toHaveBeenCalledTimes(2);
+
+			b.set(20);
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await value.get()).toBe(20);
+			expect(compute).toHaveBeenCalledTimes(3);
+		});
+	});
+
 	describe('Async Deadlock on Dispose', () => {
 		test('Should release downstream cells immediately upon disposal', async () => {
 			const context = Cell.context();
@@ -3360,6 +3626,32 @@ describe('Cell.derivedAsync', () => {
 			await expect(
 				Promise.race([downstream.get(), timeout]),
 			).resolves.not.toThrow();
+		});
+
+		test('Disposed async cells cannot attach delayed dependencies', async () => {
+			let release;
+			const source = Cell.source(1);
+			const context = Cell.context();
+			const compute = vi.fn();
+
+			Cell.runWithContext(context, () => {
+				Cell.derivedAsync(async (get) => {
+					compute();
+					await new Promise((resolve) => {
+						release = resolve;
+					});
+					return get(source);
+				});
+			});
+
+			context.destroy();
+			release();
+			await new Promise((resolve) => setTimeout(resolve));
+
+			expect(source.derivations.size).toBe(0);
+			source.set(2);
+			await new Promise((resolve) => setTimeout(resolve));
+			expect(compute).toHaveBeenCalledTimes(1);
 		});
 	});
 });
@@ -3466,6 +3758,27 @@ describe('Derived Cells', () => {
 		b.set(20);
 		expect(cb).toHaveBeenCalledTimes(3);
 		expect(c.get()).toEqual(25);
+	});
+
+	test('derived cells detach dependencies from inactive branches', () => {
+		const useA = Cell.source(true);
+		const a = Cell.source(1);
+		const b = Cell.source(2);
+		const compute = vi.fn(() => (useA.get() ? a.get() : b.get()));
+		const value = Cell.derived(compute);
+
+		expect(value.get()).toBe(1);
+		useA.set(false);
+		expect(value.get()).toBe(2);
+		expect(a.derivations.size).toBe(0);
+
+		a.set(10);
+		expect(value.get()).toBe(2);
+		expect(compute).toHaveBeenCalledTimes(2);
+
+		b.set(20);
+		expect(value.get()).toBe(20);
+		expect(compute).toHaveBeenCalledTimes(3);
 	});
 });
 
@@ -3616,12 +3929,65 @@ describe('Tracking contexts', () => {
 				});
 			});
 
+			expect(source.derivations).toBeInstanceOf(Set);
+			expect(source.derivations.size).toBe(1);
+
 			source.set(20);
 			expect(derivedValue).toBe(40);
 			context.destroy();
+			expect(source.derivations.size).toBe(0);
 			source.set(30);
 
 			expect(derivedValue).toBe(40);
+		});
+
+		test('Context destruction detaches dependencies discovered later', () => {
+			const useB = Cell.source(false);
+			const a = Cell.source(1);
+			const b = Cell.source(2);
+			const context = Cell.context();
+			const compute = vi.fn(() => (useB.get() ? b.get() : a.get()));
+			let derived;
+
+			Cell.runWithContext(context, () => {
+				derived = Cell.derived(compute);
+			});
+
+			expect(derived.get()).toBe(1);
+			useB.set(true);
+			expect(derived.get()).toBe(2);
+			expect(a.derivations.size).toBe(0);
+			expect(b.derivations.size).toBe(1);
+
+			context.destroy();
+
+			expect(useB.derivations.size).toBe(0);
+			expect(b.derivations.size).toBe(0);
+			b.set(3);
+			expect(compute).toHaveBeenCalledTimes(2);
+		});
+
+		test('Disposed derivations sever downstream graph edges', () => {
+			const source = Cell.source(1);
+			const context = Cell.context();
+			let inner;
+
+			Cell.runWithContext(context, () => {
+				inner = Cell.derived(() => source.get() * 2);
+			});
+			const outer = Cell.derived(() => inner.get() + 1);
+
+			expect(inner.derivations.has(outer)).toBe(true);
+			expect(outer.sources.has(inner)).toBe(true);
+
+			context.destroy();
+
+			expect(inner.derivations.size).toBe(0);
+			expect(outer.sources.has(inner)).toBe(false);
+
+			const retainedRead = Cell.derived(() => inner.get());
+			expect(inner.derivations.size).toBe(0);
+			expect(retainedRead.sources.size).toBe(0);
 		});
 
 		test('Nested contexts should handle stack correctly', () => {
