@@ -154,9 +154,10 @@ function triggerUpdate() {
     for (; i < UPDATE_BUFFER.length; i++) {
       const cell = UPDATE_BUFFER[i];
       if (cell[IsScheduled]) {
+        // Clear before notifying so a re-entrant write can schedule a new pass.
+        cell[IsScheduled] = false;
         // @ts-expect-error: Cell.update is protected.
         cell.update();
-        cell[IsScheduled] = false;
       }
     }
   }
@@ -211,6 +212,25 @@ class Effect {
     }
     return this.#callback;
   }
+}
+
+/**
+ * Inserts an effect after existing effects with the same priority.
+ * @template T
+ * @param {Effect<T>[]} effects
+ * @param {Effect<T>} effect
+ */
+function insertEffect(effects, effect) {
+  const priority = effect.options?.priority ?? 0;
+  let low = 0;
+  let high = effects.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    const middlePriority = effects[middle].options?.priority ?? 0;
+    if (middlePriority >= priority) low = middle + 1;
+    else high = middle;
+  }
+  effects.splice(low, 0, effect);
 }
 
 export class LocalContext {
@@ -393,18 +413,9 @@ export class Cell {
 
     if (!isAlreadySubscribed) {
       const effectContainer = new Effect(effect, options);
-      this.#effects.push(effectContainer);
-
+      insertEffect(this.#effects, effectContainer);
       addEffectToCurrentContext(this, effectContainer);
     }
-
-    this.#effects.sort((a, b) => {
-      const aPriority = a.options?.priority ?? 0;
-      const bPriority = b.options?.priority ?? 0;
-
-      if (aPriority === bPriority) return 0;
-      return aPriority < bPriority ? 1 : -1;
-    });
 
     return () => this.ignore(effect);
   }
@@ -442,16 +453,9 @@ export class Cell {
 
     if (!isAlreadySubscribed) {
       const effectContainer = new Effect(cb, options);
-      this.#effects.push(effectContainer);
+      insertEffect(this.#effects, effectContainer);
       addEffectToCurrentContext(this, effectContainer);
     }
-
-    this.#effects.sort((a, b) => {
-      const aPriority = a.options?.priority ?? 0;
-      const bPriority = b.options?.priority ?? 0;
-      if (aPriority === bPriority) return 0;
-      return aPriority < bPriority ? 1 : -1;
-    });
 
     throwAnyErrors();
 
@@ -759,15 +763,11 @@ export class Cell {
    * @returns {X} The return value of the callback.
    */
   static batch = (callback) => {
-    const currentBatchLevel = BATCH_NESTING_LEVEL;
-    const currentUpdateBuffer = UPDATE_BUFFER;
     const wasUpdating = IS_UPDATING;
-    const currentBatchedEffects = BATCHED_EFFECTS;
+    const isOutermost = BATCH_NESTING_LEVEL === 0;
 
-    UPDATE_BUFFER = [];
     IS_UPDATING = true;
     BATCH_NESTING_LEVEL++;
-    BATCHED_EFFECTS = new Map();
     /** @type {X | undefined} */
     let value;
     try {
@@ -776,37 +776,24 @@ export class Cell {
       } catch (e) {
         if (e instanceof Error) cellErrors.push(e);
       }
-      if (!wasUpdating) triggerUpdate();
+      if (isOutermost && !wasUpdating) triggerUpdate();
     } catch (e) {
       if (e instanceof Error) cellErrors.push(e);
     } finally {
-      BATCH_NESTING_LEVEL = currentBatchLevel;
-      if (BATCH_NESTING_LEVEL === 0) {
-        for (const [effect, value] of BATCHED_EFFECTS) {
+      BATCH_NESTING_LEVEL--;
+      IS_UPDATING = wasUpdating;
+
+      if (isOutermost) {
+        const effects = BATCHED_EFFECTS;
+        BATCHED_EFFECTS = new Map();
+        for (const [effect, effectValue] of effects) {
           try {
-            effect(value);
+            effect(effectValue);
           } catch (e) {
             if (e instanceof Error) cellErrors.push(e);
           }
         }
-      } else {
-        // Merge nested batch effects into parent batch so they're not lost
-        for (const [effect, value] of BATCHED_EFFECTS) {
-          currentBatchedEffects.set(effect, value);
-        }
       }
-
-      // Merge any cells scheduled for update into the parent buffer
-      for (const cell of UPDATE_BUFFER) {
-        if (!currentUpdateBuffer.includes(cell)) {
-          currentUpdateBuffer.push(cell);
-        }
-      }
-
-      UPDATE_BUFFER = currentUpdateBuffer;
-      IS_UPDATING = wasUpdating;
-      BATCH_NESTING_LEVEL = currentBatchLevel;
-      BATCHED_EFFECTS = currentBatchedEffects;
     }
     throwAnyErrors();
     return /** @type {X} */ (value);
@@ -949,8 +936,10 @@ export class SourceCell extends Cell {
     if (isEqual) return;
 
     this.wvalue = value;
-    this[IsScheduled] = true;
-    UPDATE_BUFFER.push(this);
+    if (!this[IsScheduled]) {
+      this[IsScheduled] = true;
+      UPDATE_BUFFER.push(this);
+    }
     if (!IS_UPDATING) triggerUpdate();
   }
 }

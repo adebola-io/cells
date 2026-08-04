@@ -175,6 +175,38 @@ describe('Effects', () => {
 		expect(callback).toHaveBeenCalledTimes(1);
 	});
 
+	test('Cell should reschedule same-cell writes made by an effect', () => {
+		const cell = Cell.source(0);
+		const values = [];
+
+		cell.listen((value) => {
+			values.push(value);
+			if (value === 1) cell.set(2);
+		});
+
+		cell.set(1);
+
+		expect(values).toEqual([1, 2]);
+		expect(cell.get()).toBe(2);
+	});
+
+	test('Nested batches should preserve re-entrant same-cell writes', () => {
+		const cell = Cell.source(0);
+		const values = [];
+
+		cell.listen((value) => {
+			values.push(value);
+			if (value === 1) {
+				Cell.batch(() => cell.set(2));
+			}
+		});
+
+		cell.set(1);
+
+		expect(values).toEqual([1, 2]);
+		expect(cell.get()).toBe(2);
+	});
+
 	test('Cells should have updated values when read in effects', () => {
 		const cell = Cell.source(1);
 		const derivedCell = Cell.derived(() => cell.get() * 2);
@@ -1067,6 +1099,75 @@ describe('Batched effects', () => {
 		});
 
 		expect(order).toBe('ABC');
+	});
+
+	test('Default-priority listeners should precede negative priorities', () => {
+		const cell = Cell.source(0);
+		let order = '';
+
+		cell.listen(() => (order += 'N'), { priority: -1 });
+		cell.listen(() => (order += 'D'));
+		cell.set(1);
+
+		expect(order).toBe('DN');
+	});
+
+	test('Equal-priority listeners preserve registration order', () => {
+		const cell = Cell.source(0);
+		let order = '';
+
+		cell.listen(() => (order += 'A'), { priority: 1 });
+		cell.listen(() => (order += 'B'), { priority: 1 });
+		cell.listen(() => (order += 'C'), { priority: 1 });
+		cell.set(1);
+
+		expect(order).toBe('ABC');
+	});
+
+	test('runAndListen should preserve default and negative priority order', () => {
+		const cell = Cell.source(0);
+		let order = '';
+
+		cell.runAndListen(() => (order += 'N'), { priority: -1 });
+		cell.runAndListen(() => (order += 'D'));
+		order = '';
+		cell.set(1);
+
+		expect(order).toBe('DN');
+	});
+
+	test('Nested batches should notify once with the final value', () => {
+		const cell = Cell.source(0);
+		const callback = vi.fn();
+		cell.listen(callback);
+
+		Cell.batch(() => {
+			cell.set(1);
+			Cell.batch(() => {
+				cell.set(2);
+				cell.set(3);
+			});
+			cell.set(4);
+		});
+
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect(callback).toHaveBeenCalledWith(4);
+	});
+
+	test('Batched listeners can start isolated nested batches', () => {
+		const source = Cell.source(0);
+		const target = Cell.source(0);
+		const values = [];
+
+		source.listen((value) => {
+			values.push(`source:${value}`);
+			Cell.batch(() => target.set(value * 2));
+		});
+		target.listen((value) => values.push(`target:${value}`));
+
+		Cell.batch(() => source.set(3));
+
+		expect(values).toEqual(['source:3', 'target:6']);
 	});
 
 	test('Batch with conditional derived cell updates', () => {
