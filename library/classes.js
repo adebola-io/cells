@@ -621,6 +621,7 @@ export class Cell {
    *   - `signal`: An AbortSignal that is aborted when a new execution starts,
    *     useful for cancelling in-flight requests.
    * @returns {AsyncTaskCell<Input, Output>} A new AsyncTaskCell instance.
+   * @type <Input, Output>(fn: (input: Input, signal: AbortSignal) => Promise<Output>) => AsyncTaskCell<Input, Output>
    *
    * @example
    * ```javascript
@@ -684,6 +685,7 @@ export class Cell {
    * @template {Record<string, Cell<any>>} CellData
    * @param {CellData} input Cells to join (may include async and sync cells).
    * @returns {Composite<CellData>}
+   * @type <CellData extends Record<string, Cell<any>>>(input: CellData) => Composite<CellData>
    *
    * @example
    * const user = Cell.derivedAsync(async (get) => fetchUser(get(id)));
@@ -746,6 +748,7 @@ export class Cell {
    * @param {LocalContext} context - The context to bind resources to.
    * @param {() => T} callback - The function to execute.
    * @returns {T} The return value of the callback.
+   * @type <T>(context: LocalContext, callback: () => T) => T
    */
   static runWithContext = (context, callback) => {
     pushLocalContext(context);
@@ -761,6 +764,7 @@ export class Cell {
    * Batches all the effects created to run only once.
    * @param {() => X} callback - The function to be executed in a batched manner.
    * @returns {X} The return value of the callback.
+   * @type <X>(callback: () => X) => X
    */
   static batch = (callback) => {
     const wasUpdating = IS_UPDATING;
@@ -805,6 +809,7 @@ export class Cell {
    * @template [U=any]
    * @param {Cell<T> | U} value - The value to check.
    * @returns {value is Cell<T>} True if the value is an instance of Cell, false otherwise.
+   * @type <T = any, U = any>(value: Cell<T> | U) => value is Cell<T>
    */
   static isCell = (value) => value instanceof Cell;
 }
