@@ -1526,6 +1526,11 @@ function deepEqual(a, b) {
     return true;
   }
 
+  // Class instances and host objects (such as DOM nodes) are opaque values.
+  // Their observable state may live on the prototype or outside enumerable
+  // properties, so comparing their own keys can incorrectly report equality.
+  if (a.constructor !== Object) return false;
+
   const keysA = Object.keys(a);
   const length = keysA.length;
 

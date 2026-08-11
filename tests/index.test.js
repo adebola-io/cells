@@ -39,6 +39,59 @@ describe('Cells', () => {
 		expect(callback).toHaveBeenCalledTimes(1);
 	});
 
+	test('Cell should update for distinct opaque objects with the same constructor', () => {
+		class OpaqueObject {}
+		const first = new OpaqueObject();
+		const second = new OpaqueObject();
+		const cell = Cell.source(first);
+		const callback = vi.fn();
+		cell.listen(callback);
+
+		cell.set(second);
+
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect(cell.peek()).toBe(second);
+  });
+
+	test('Cell should not update for same distinct opaque objects', () => {
+		class OpaqueObject {}
+		const first = new OpaqueObject();
+		const cell = Cell.source(first);
+		const callback = vi.fn();
+		cell.listen(callback);
+
+		cell.set(first);
+
+		expect(cell.peek()).toBe(first);
+		expect(callback).not.toHaveBeenCalled();
+	});
+
+	test('Cell should compare opaque objects by identity inside arrays', () => {
+		class OpaqueObject {}
+		const first = new OpaqueObject();
+		const second = new OpaqueObject();
+		const cell = Cell.source([first]);
+		const callback = vi.fn();
+		cell.listen(callback);
+
+		cell.set([second]);
+		expect(callback).toHaveBeenCalledTimes(1);
+		expect(cell.peek()).toEqual([second]);
+
+		cell.set([second]);
+		expect(callback).toHaveBeenCalledTimes(1);
+	});
+
+	test('Cell should still deduplicate structurally equal empty objects', () => {
+		const cell = Cell.source({});
+		const callback = vi.fn();
+		cell.listen(callback);
+
+		cell.set({});
+
+		expect(callback).not.toHaveBeenCalled();
+	});
+
 	test('Creates a reactive Cell with null or undefined', () => {
 		/** @type {SourceCell<any>} */
 		const nullCell = Cell.source(null);
