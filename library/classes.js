@@ -10,7 +10,7 @@
  * *all* inputs to settle before yielding.
  * @property {{
  *  [key in keyof CellData]:
- *    CellData[key] extends AsyncDerivedCell<infer T>
+ *    CellData[key] extends AsyncCell<infer T>
  *    ? AsyncDerivedCell<T> :
  *    CellData[key] extends Cell<infer X> ? AsyncDerivedCell<X> : never }} values
  * @property {Cell<boolean>} pending
