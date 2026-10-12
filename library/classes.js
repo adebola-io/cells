@@ -958,6 +958,13 @@ export class AsyncCell extends DerivedCell {
   #upstream = new Set();
   /** @type {Set<AsyncCell<any>>} */
   #consumed = new Set();
+  /**
+   * Parent computations (by promise) that will schedule this cell when they
+   * settle. Kept apart from `#upstream`, which also holds promises this cell
+   * only waits on as a grandchild.
+   * @type {Set<Promise<any>>}
+   */
+  #scheduledBy = new Set();
   /** @type {undefined | (() => void)} */
   #abandonLastComputation;
   /** @type {AbortController | undefined} */
@@ -1152,11 +1159,17 @@ export class AsyncCell extends DerivedCell {
   #notify(promise, state, lastStablePromise, initialState) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
-      if (child.#upstream.has(promise)) continue;
+      // Not `#upstream`: an earlier sibling may already have marked this child
+      // as waiting on the promise (it is also that sibling's descendant). It
+      // still reads this cell directly, so this cell must still schedule it;
+      // the sibling in between may settle unchanged and schedule nothing.
+      if (child.#scheduledBy.has(promise)) continue;
+      child.#scheduledBy.add(promise);
 
       // Only direct children should be scheduled based on this cell's value change.
       // Grandchildren will be scheduled by their direct parent when it computes.
       promise.then(() => {
+        child.#scheduledBy.delete(promise);
         child.#upstream.delete(promise);
         if (this[IsDisposed] || child[IsDisposed]) return;
         if (lastStablePromise === initialState) {
