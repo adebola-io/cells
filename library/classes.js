@@ -1402,7 +1402,7 @@ export class AsyncTaskCell extends AsyncCell {
      * work in progress, use the provided AbortSignal and handle it inside the
      * task function.
      *
-     * @param {I} input - The input value to pass to the task function.
+     * @param {I extends undefined ? never : I} input - The input value to pass to the task function.
      * @returns {Promise<T | null>} A promise that resolves with the task result,
      *   or null if the task hasn't been executed yet.
      *
