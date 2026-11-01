@@ -2107,6 +2107,30 @@ describe('Cell.derivedAsync', () => {
 			expect(await d.get()).toBe(221);
 		});
 
+		test('a cell reading A and a descendant of A updates when the descendant settles unchanged', async () => {
+			const source = Cell.source(0);
+			const a = Cell.derivedAsync(async (get) => get(source));
+			// Depends on `a`, but always settles to the same value, so it never
+			// schedules its own dependents.
+			const b = Cell.derivedAsync(async (get) => {
+				await get(a);
+				return null;
+			});
+			// Reads `a` directly, so `a` must schedule it.
+			const c = Cell.derivedAsync(async (get) => {
+				const aVal = await get(a);
+				await get(b);
+				return aVal;
+			});
+
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await c.get()).toBe(0);
+
+			source.set(1);
+			await vi.advanceTimersByTimeAsync(10);
+			expect(await c.get()).toBe(1);
+		});
+
 		test('downstream async derived is not restarted when a slower upstream dependency settles later', async () => {
 			const source = Cell.source(2);
 
@@ -4271,6 +4295,49 @@ describe('Cell.composite', () => {
 		const valueB2 = await composite.values.b.get();
 		expect(valueA2).toBe('a-2');
 		expect(valueB2).toBe('b-2');
+	});
+
+	test('values follow every input when one of them settles unchanged', async () => {
+		// A list and its selected item, as a view loads them: the item comes
+		// from the loaded index, and its extras depend on what the item is.
+		const selectedId = Cell.source(/** @type {string | null} */ (null));
+		const index = Cell.derivedAsync(async () => [{ id: 's', kind: 'remote' }]);
+		const item = Cell.derivedAsync(async (get) => {
+			const id = get(selectedId);
+			if (id === null) return null;
+			return (await get(index)).find((entry) => entry.id === id) ?? null;
+		});
+		const kind = Cell.derivedAsync(async (get) => (await get(item))?.kind ?? null);
+		// `null` with no selection and for a remote item alike: unchanged by
+		// selecting one.
+		const extras = Cell.derivedAsync(async (get) => {
+			const id = get(selectedId);
+			const current = await get(kind);
+			if (id === null || current === null || current === 'remote') return null;
+			return ['extra'];
+		});
+
+		const page = Cell.composite({ index, item, extras });
+		// Ready once the extras value yields for the selection.
+		const shown = Cell.derivedAsync(async (get) => {
+			const id = get(selectedId);
+			await get(page.values.extras);
+			return id;
+		});
+		await shown.get();
+		await page.values.item.get();
+
+		selectedId.set('s');
+		await delay(10);
+		expect(await shown.get()).toBe('s');
+
+		// Every input has settled for this round by the time it is shown...
+		expect(item.pending.peek()).toBe(false);
+		// ...so a cell first read now sees this round's item, and keeps it.
+		const view = Cell.derivedAsync(async (get) => (await get(page.values.item))?.id ?? null);
+		await delay(20);
+		expect(await view.get()).toBe('s');
+		expect(await page.values.item.get()).toEqual({ id: 's', kind: 'remote' });
 	});
 
 	test('only tracks pending and error from AsyncDerivedCells', () => {

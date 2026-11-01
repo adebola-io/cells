@@ -10,7 +10,7 @@
  * *all* inputs to settle before yielding.
  * @property {{
  *  [key in keyof CellData]:
- *    CellData[key] extends AsyncDerivedCell<infer T>
+ *    CellData[key] extends AsyncCell<infer T>
  *    ? AsyncDerivedCell<T> :
  *    CellData[key] extends Cell<infer X> ? AsyncDerivedCell<X> : never }} values
  * @property {Cell<boolean>} pending
@@ -1152,7 +1152,9 @@ export class AsyncCell extends DerivedCell {
   #notify(promise, state, lastStablePromise, initialState) {
     for (const child of this.derivations) {
       if (!(child instanceof AsyncDerivedCell)) continue;
-      if (child.#upstream.has(promise)) continue;
+      // Every child here reads this cell directly, so it is scheduled here even
+      // if an earlier sibling already marked it upstream as its descendant: that
+      // sibling may settle unchanged and schedule nothing.
 
       // Only direct children should be scheduled based on this cell's value change.
       // Grandchildren will be scheduled by their direct parent when it computes.
